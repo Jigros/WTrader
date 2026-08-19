@@ -5,6 +5,7 @@ export type SemanticGameAction =
   | 'NEXT_PAGE'
   | 'PREVIOUS_PAGE'
   | 'REFRESH'
+  | 'CHANGE_FILTER'
   | 'BUY'
   | 'CONFIRM_BUY'
   | 'CANCEL'

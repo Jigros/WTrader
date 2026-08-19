@@ -1,8 +1,12 @@
 import type { ClientGuiSnapshot } from '@wtrader/game-client';
 import type { SemanticGameAction, SemanticSlotExpectation } from './semantic-actions.js';
 
+export type LearnedGuiState = 'AUCTION_PAGE' | 'UNKNOWN';
+
 export interface GuiLayoutCandidate {
+  readonly state: LearnedGuiState;
   readonly title: string;
+  readonly titlePattern: string;
   readonly signature: string;
   readonly slotCount: number;
   readonly buttonCandidates: readonly SemanticSlotExpectation[];
@@ -15,6 +19,7 @@ const actionKeywords: ReadonlyArray<readonly [SemanticGameAction, RegExp]> = [
   ['NEXT_PAGE', /next|forward|page.*right/i],
   ['PREVIOUS_PAGE', /previous|back.*page|page.*left/i],
   ['REFRESH', /refresh|reload/i],
+  ['CHANGE_FILTER', /change\s+(?:filter|sort)|filter|sort/i],
   ['CONFIRM_BUY', /confirm.*buy|purchase.*confirm|yes/i],
   ['BUY', /buy|purchase/i],
   ['CANCEL', /cancel|close|no/i],
@@ -23,7 +28,12 @@ const actionKeywords: ReadonlyArray<readonly [SemanticGameAction, RegExp]> = [
   ['BACK', /^back$/i],
 ];
 
+export function classifyGuiState(title: string): LearnedGuiState {
+  return /\b(?:auction|auctions|auction house|ah)\b/i.test(title) ? 'AUCTION_PAGE' : 'UNKNOWN';
+}
+
 export function deriveGuiLayoutCandidate(gui: ClientGuiSnapshot): GuiLayoutCandidate {
+  const state = classifyGuiState(gui.title);
   const buttonCandidates = gui.slots.flatMap((slot) => {
     if (slot.item === null) return [];
     const name = slot.rawName ?? slot.item.displayName;
@@ -48,7 +58,9 @@ export function deriveGuiLayoutCandidate(gui: ClientGuiSnapshot): GuiLayoutCandi
     return actionKeywords.some(([, pattern]) => pattern.test(text)) ? [] : [slot.slot];
   });
   return {
+    state,
     title: gui.title,
+    titlePattern: state === 'AUCTION_PAGE' ? '\\b(?:auction|auctions|auction house|ah)\\b' : `^${escapePattern(gui.title)}$`,
     signature: gui.signature,
     slotCount: gui.slotCount,
     buttonCandidates,
