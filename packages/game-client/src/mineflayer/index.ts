@@ -73,12 +73,19 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
 
   private registerBot(bot: Bot): void {
     bot.on('spawn', () => { this.state = 'READY'; this.emit({ type: 'CLIENT_CONNECTED', observedAt: new Date() }); this.observeInventory(bot); });
-    bot.on('windowOpen', (window: MineflayerWindow) => {
+    bot.on('windowOpen', (window: MineflayerWindow | null) => {
+      if (window === null) return;
       if ('on' in window && typeof window.on === 'function') window.on('updateSlot', () => { this.observeWindow(window, 'GUI_UPDATED'); });
       this.observeWindow(window, 'GUI_OPENED');
     });
-    bot.on('windowClose', (window: MineflayerWindow) => { if (this.gui?.id === windowId(window)) { const guiId = this.gui.id; this.gui = null; this.lastWindowFingerprint = null; this.emit({ type: 'GUI_CLOSED', observedAt: new Date(), guiId }); } });
-    bot.on('windowUpdate', (window: MineflayerWindow) => { this.observeWindow(window, 'GUI_UPDATED'); });
+    bot.on('windowClose', (window: MineflayerWindow | null) => {
+      if (window === null || this.gui?.id !== windowId(window)) return;
+      const guiId = this.gui.id;
+      this.gui = null;
+      this.lastWindowFingerprint = null;
+      this.emit({ type: 'GUI_CLOSED', observedAt: new Date(), guiId });
+    });
+    bot.on('windowUpdate', (window: MineflayerWindow | null) => { if (window !== null) this.observeWindow(window, 'GUI_UPDATED'); });
     bot.on('updateSlot', () => { if (bot.currentWindow !== null) this.observeWindow(bot.currentWindow, 'GUI_UPDATED'); else this.observeInventory(bot); });
     bot.on('messagestr', (message: string) => { this.emit({ type: 'CHAT_MESSAGE', observedAt: new Date(), message }); });
     bot.on('kicked', (reason: unknown) => { this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_KICKED', reason: String(reason) } }); });

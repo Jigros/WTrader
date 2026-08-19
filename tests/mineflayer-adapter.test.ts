@@ -30,6 +30,14 @@ describe('MineflayerGameClientAdapter', () => {
     await expect(adapter.getCurrentGui()).resolves.toBeNull();
   });
 
+  it('ignores null window events during connection transitions', async () => {
+    const bot = new BotFixture();
+    const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', botFactory: () => bot as unknown as Bot });
+    await adapter.connect();
+    expect(() => { bot.emit('windowOpen', null); bot.emit('windowClose', null); bot.emit('windowUpdate', null); }).not.toThrow();
+    await expect(adapter.getCurrentGui()).resolves.toBeNull();
+  });
+
   it('serializes items and validates click identity before clickWindow', async () => {
     const bot = new BotFixture();
     const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', botFactory: () => bot as unknown as Bot });
