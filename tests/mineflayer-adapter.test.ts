@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { formatKickReason, isSafeResourcePackUrl, MineflayerGameClientAdapter, itemFingerprint, serializeItem } from '@wtrader/game-client';
+import { extractWindowTitle, formatKickReason, isSafeResourcePackUrl, MineflayerGameClientAdapter, itemFingerprint, serializeItem } from '@wtrader/game-client';
 import type { Bot } from 'mineflayer';
 
 class BotFixture extends EventEmitter {
@@ -19,7 +19,12 @@ class BotFixture extends EventEmitter {
 const anvil = { type: 145, name: 'anvil', displayName: 'Refresh', count: 1 };
 
 describe('MineflayerGameClientAdapter', () => {
-  it('normalizes window lifecycle and suppresses duplicate slot updates', async () => {
+  it('normalizes structured Donut auction title components', () => {
+    const title = extractWindowTitle({ title: { type: 'string', value: 'Auction ', extra: [{ text: '(Page 1)' }] }, type: 'minecraft:generic_9x6' } as unknown as import('mineflayer').MineflayerWindow);
+    expect(title).toEqual({ readableTitle: 'Auction (Page 1)', rawTitle: '{"type":"string","value":"Auction ","extra":[{"text":"(Page 1)"}]}' });
+  });
+
+  it('normalizes window lifecycle, observes raw slot updates, and suppresses duplicate GUI updates', async () => {
     const bot = new BotFixture();
     const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', botFactory: () => bot as unknown as Bot });
     const events: string[] = [];
@@ -30,7 +35,7 @@ describe('MineflayerGameClientAdapter', () => {
     bot.emit('windowOpen', bot.currentWindow);
     bot.emit('updateSlot');
     bot.emit('windowClose', bot.currentWindow);
-    expect(events).toEqual(['CLIENT_CONNECTED', 'INVENTORY_UPDATED', 'GUI_OPENED', 'GUI_CLOSED']);
+    expect(events).toEqual(['CLIENT_CONNECTED', 'INVENTORY_UPDATED', 'GUI_OPENED', 'RAW_OBSERVATION', 'GUI_CLOSED']);
     await expect(adapter.getCurrentGui()).resolves.toBeNull();
   });
 

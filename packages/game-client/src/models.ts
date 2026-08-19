@@ -26,6 +26,8 @@ export interface ClientGuiSnapshot {
   readonly id: string;
   readonly observedAt: Date;
   readonly title: string;
+  readonly readableTitle?: string;
+  readonly rawTitle?: string;
   readonly slotCount: number;
   readonly slots: readonly GuiSlot[];
   readonly cursor?: NormalizedItem | null;

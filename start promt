@@ -1,26 +1,48 @@
-Add protocol-level disconnect diagnostics to Mineflayer smoke runner.
+Real Donut AH refresh is now confirmed.
 
 Observed:
-- server ping reports 26.1.2
-- client forced to 1.21.11
-- CLIENT_CONNECTED succeeds
-- server immediately kicks with "Invalid sequence"
+- window type: minecraft:generic_9x6
+- raw title resolves to "Auction (Page 1)"
+- listing slots: 0..44
+- REFRESH: slot 49, minecraft:anvil
+- controls remain stable across refresh
+- refresh may emit GUI_UPDATED followed by GUI_OPENED with the same window id
+- listing contents change across refresh
 
-Add OBSERVE-ONLY logging for the last ~30 inbound/outbound packet names before kick:
-- packet name
-- direction
-- timestamp
-- state (configuration/play)
-- do not dump auth tokens or sensitive payloads
+Implement:
 
-On kick print:
-- readableReason
-- negotiated client version
-- server ping version
-- last inbound packet names
-- last outbound packet names
+1. Fix semantic title extraction.
+   rawTitle structures like:
+   {"type":"string","value":"Auction (Page 1)"}
+   and compound/extra variants
+   must normalize to:
+   "Auction (Page 1)"
 
-Keep a bounded ring buffer.
-Do not modify packets or connection behavior.
+2. Classify AUCTION_PAGE from normalized title:
+   ^Auction \(Page (\d+)\)$
 
+3. Treat slots 0..44 as listing candidates for this learned layout.
+   Persist this as discovered layout data, not a global assumption for every GUI.
+
+4. Learn REFRESH semantically from:
+   AUCTION_PAGE + minecraft:anvil
+   Current observed slot is 49, but validate item/gui before every click.
+
+5. Refresh handling must tolerate:
+   GUI_UPDATED
+   and/or GUI_OPENED with same window id.
+   Do not interpret same-id GUI_OPENED after refresh as a completely unrelated GUI.
+
+6. On refresh diff previous vs new slots 0..44 and emit only real changed/new listings downstream.
+
+7. Improve refresh metrics:
+   click -> first server update
+   click -> complete refreshed snapshot
+   changed listing count
+   raw event count
+   normalized event count
+
+8. Keep controls 47/48/49/50/51/53 out of listing parsing.
+
+Add regression fixtures from this real capture.
 Run tests/typecheck/build.

@@ -11,10 +11,16 @@ describe('seeded DonutSMP auction GUI', () => {
     expect(layout.titlePattern).toBe('^Auction \\(Page (\\d+)\\)$');
   });
 
-  it('maps an anvil to refresh without hardcoding a slot', () => {
-    const gui = MockGameClientAdapter.gui('Auction (Page 1)', [{ slot: 41, item: { itemType: 'ANVIL', displayName: 'Refresh', quantity: 1, enchantments: [] } }]);
+  it('uses the learned Donut layout for listings and refresh', () => {
+    const gui = MockGameClientAdapter.gui('Auction (Page 1)', [{ slot: 49, item: { itemType: 'minecraft:anvil', displayName: 'Refresh', quantity: 1, enchantments: [] } }]);
     const layout = deriveGuiLayoutCandidate(gui);
-    expect(layout.buttonCandidates).toMatchObject([{ action: 'REFRESH', slot: 41, expectedItemType: 'ANVIL' }]);
+    expect(layout.buttonCandidates).toMatchObject([{ action: 'REFRESH', slot: 49, expectedItemType: 'minecraft:anvil' }]);
+    expect(layout.listingSlotCandidates).toEqual(Array.from({ length: 45 }, (_, slot) => slot));
+  });
+
+  it('does not learn refresh from a listing slot', () => {
+    const gui = MockGameClientAdapter.gui('Auction (Page 1)', [{ slot: 41, item: { itemType: 'minecraft:anvil', displayName: 'Refresh', quantity: 1, enchantments: [] } }]);
+    expect(deriveGuiLayoutCandidate(gui).buttonCandidates).not.toContainEqual(expect.objectContaining({ action: 'REFRESH' }));
   });
 
   it('maps the confirmed filter tooltip semantically', () => {

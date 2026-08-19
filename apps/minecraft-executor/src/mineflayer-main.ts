@@ -1,5 +1,7 @@
 import { createInterface } from 'node:readline';
-import { MineflayerGameClientAdapter, type GameClientEvent, type MineflayerConnectionOptions } from '@wtrader/game-client';
+import { MineflayerGameClientAdapter, type ClientGuiSnapshot, type GameClientEvent, type MineflayerConnectionOptions } from '@wtrader/game-client';
+import { classifyGuiState } from './gui-learning.js';
+import { guiSlotChanges } from './semantic-actions.js';
 
 export interface SmokeTestEnvironment {
   readonly MINECRAFT_HOST?: string;
@@ -57,13 +59,17 @@ function formatDiagnostic(payload: unknown): string {
   return `[MINEFLAYER_KICKED]\nreadableReason=${payload.readableReason}\nnegotiatedClientVersion=${payload.negotiatedClientVersion}\nserverPingVersion=unavailable\nlastInboundPackets=${inbound || 'none'}\nlastOutboundPackets=${outbound || 'none'}`;
 }
 
+function isUpdateSlotObservation(payload: unknown): boolean {
+  return typeof payload === 'object' && payload !== null && (payload as Record<string, unknown>)['type'] === 'MINEFLAYER_UPDATE_SLOT';
+}
+
 function isKickDiagnostic(payload: unknown): payload is { readonly type: 'MINEFLAYER_KICKED'; readonly readableReason: string; readonly negotiatedClientVersion: string; readonly packetTrace: readonly { readonly name: string; readonly direction: 'INBOUND' | 'OUTBOUND'; readonly observedAt: string; readonly state: string }[] } {
   if (typeof payload !== 'object' || payload === null) return false;
   const value = payload as Record<string, unknown>;
   return value['type'] === 'MINEFLAYER_KICKED' && typeof value['readableReason'] === 'string' && typeof value['negotiatedClientVersion'] === 'string' && Array.isArray(value['packetTrace']);
 }
 
-export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line: string): Promise<string> {
+export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line: string, confirmUnknownAction: (details: string) => Promise<boolean> = () => Promise.resolve(false), onRefreshClick: (observedAt: Date) => void = () => {}): Promise<string> {
   const [command, ...arguments_] = line.trim().split(/\s+/);
   switch (command) {
     case '/ah':
@@ -76,15 +82,46 @@ export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line
       return `Command accepted=${result.accepted}${result.message === undefined ? '' : ` message=${result.message}`}`;
     }
     case '/gui': return formatGuiSnapshot(await adapter.getCurrentGui());
+    case '/slot': return formatSlot(await adapter.getCurrentGui(), arguments_[0]);
+    case '/click': return clickGuiSlot(adapter, arguments_[0], confirmUnknownAction, onRefreshClick);
     case '/inventory': return formatInventory(await adapter.getInventory());
     case '/state': return `state=${await adapter.getState()}`;
     case '/quit': return 'QUIT';
-    default: return 'Commands: /ah, /cmd <minecraft command>, /gui, /inventory, /state, /quit';
+    default: return 'Commands: /ah, /cmd <minecraft command>, /gui, /slot <id>, /click <slot>, /inventory, /state, /quit';
   }
 }
 
+async function clickGuiSlot(adapter: MineflayerGameClientAdapter, slotArgument: string | undefined, confirmUnknownAction: (details: string) => Promise<boolean>, onRefreshClick: (observedAt: Date) => void): Promise<string> {
+  const gui = await adapter.getCurrentGui();
+  if (gui === null) return 'No active GUI';
+  const slot = parseSlotId(slotArgument);
+  if (slot === null) return 'Usage: /click <slot>';
+  const target = gui.slots.find((candidate) => candidate.slot === slot);
+  if (target?.item === null || target === undefined) return `slot=${slot} is empty or missing`;
+  const knownRefresh = slot === 49 && target.item.itemType === 'minecraft:anvil' && classifyGuiState(gui.title) === 'AUCTION_PAGE';
+  const details = formatGuiSlot(target);
+  if (!knownRefresh && !await confirmUnknownAction(`Click unknown action:\n${details}`)) return `Confirmation declined\n${details}`;
+  const clickedAt = new Date();
+  if (knownRefresh) onRefreshClick(clickedAt);
+  const result = await adapter.clickSlot({ slot, expectedSignature: gui.signature });
+  return `clickTimestamp=${clickedAt.toISOString()}\n${details}\naccepted=${result.accepted} changed=${result.changed}${result.message === undefined ? '' : ` message=${result.message}`}`;
+}
+
+function parseSlotId(value: string | undefined): number | null {
+  if (value === undefined || !/^\d+$/.test(value)) return null;
+  return Number(value);
+}
+
+export function formatSlot(gui: ClientGuiSnapshot | null, slotArgument: string | undefined): string {
+  if (gui === null) return 'No active GUI';
+  const slot = parseSlotId(slotArgument);
+  if (slot === null) return 'Usage: /slot <id>';
+  const target = gui.slots.find((candidate) => candidate.slot === slot);
+  return target === undefined ? `slot=${slot} is missing` : JSON.stringify(target, null, 2);
+}
+
 function formatGui(prefix: string, gui: NonNullable<Awaited<ReturnType<MineflayerGameClientAdapter['getCurrentGui']>>>): string {
-  return `${prefix}\ntitle=${gui.title}\nid=${gui.id}\nslots=${gui.slotCount}\n${formatGuiSlots(gui)}`;
+  return `${prefix}\ntitle=${gui.title}\nrawTitle=${gui.rawTitle ?? gui.title}\nid=${gui.id}\nslots=${gui.slotCount}\n${formatGuiSlots(gui)}`;
 }
 
 export function formatGuiSnapshot(gui: Awaited<ReturnType<MineflayerGameClientAdapter['getCurrentGui']>>): string {
@@ -92,7 +129,12 @@ export function formatGuiSnapshot(gui: Awaited<ReturnType<MineflayerGameClientAd
 }
 
 function formatGuiSlots(gui: NonNullable<Awaited<ReturnType<MineflayerGameClientAdapter['getCurrentGui']>>>): string {
-  return gui.slots.flatMap((slot) => slot.item === null ? [] : [`slot=${slot.slot} item=${slot.item.itemType} name=${slot.item.displayName} quantity=${slot.item.quantity}${slot.item.lore === undefined ? '' : ` lore=${slot.item.lore.join(' | ')}`}`]).join('\n');
+  return gui.slots.flatMap((slot) => slot.item === null ? [] : [formatGuiSlot(slot)]).join('\n');
+}
+
+function formatGuiSlot(slot: NonNullable<ClientGuiSnapshot['slots'][number]>): string {
+  if (slot.item === null) return `slot=${slot.slot} empty`;
+  return `slot=${slot.slot} item=${slot.item.itemType} name=${slot.item.displayName} quantity=${slot.item.quantity}${slot.item.lore === undefined ? '' : ` lore=${slot.item.lore.join(' | ')}`}`;
 }
 
 export function formatInventory(inventory: Awaited<ReturnType<MineflayerGameClientAdapter['getInventory']>>): string {
@@ -105,7 +147,26 @@ export async function startMineflayerSmokeTest(environment: SmokeTestEnvironment
   const adapter = new MineflayerGameClientAdapter(options);
   let shuttingDown = false;
   process.stdout.write(`Mineflayer smoke test host=${options.host} port=${options.port ?? 25565} username=${options.username} version=${options.version ?? 'auto'} profilesFolder=${options.profilesFolder ?? '.minecraft-auth'} auth=microsoft\n`);
-  adapter.subscribe((event) => { process.stdout.write(`${formatSmokeEvent(event)}\n`); });
+  let refreshClickAt: Date | null = null;
+  let firstUpdateSlotAt: Date | null = null;
+  let rawUpdateSlotEvents = 0;
+  let normalizedGuiEvents = 0;
+  let previousGui: ClientGuiSnapshot | null = null;
+  adapter.subscribe((event) => {
+    if (event.type === 'RAW_OBSERVATION' && isUpdateSlotObservation(event.payload)) {
+      rawUpdateSlotEvents += 1;
+      if (refreshClickAt !== null && firstUpdateSlotAt === null) firstUpdateSlotAt = event.observedAt;
+    }
+    if ((event.type === 'GUI_OPENED' || event.type === 'GUI_UPDATED') && refreshClickAt !== null) {
+      normalizedGuiEvents += 1;
+      const changedSlots = guiSlotChanges(previousGui, event.gui).filter((change) => change.slot >= 0 && change.slot <= 44).map((change) => change.slot);
+      const latencyMs = firstUpdateSlotAt === null ? 'unavailable' : firstUpdateSlotAt.getTime() - refreshClickAt.getTime();
+      process.stdout.write(`[REFRESH_DEBUG] clickTimestamp=${refreshClickAt.toISOString()} firstUpdateSlotTimestamp=${firstUpdateSlotAt?.toISOString() ?? 'unavailable'} changedSlotIds=${changedSlots.join(',')} duplicateRawEventCount=${Math.max(0, rawUpdateSlotEvents - normalizedGuiEvents)} normalizedEventCount=${normalizedGuiEvents} clickToFirstDeltaLatencyMs=${latencyMs}\n`);
+      refreshClickAt = null;
+    }
+    if (event.type === 'GUI_OPENED' || event.type === 'GUI_UPDATED') previousGui = event.gui;
+    process.stdout.write(`${formatSmokeEvent(event)}\n`);
+  });
   await adapter.connect();
   const readline = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   readline.setPrompt('wtrader> ');
@@ -118,7 +179,15 @@ export async function startMineflayerSmokeTest(environment: SmokeTestEnvironment
     process.stdout.write(`Mineflayer smoke test stopped: ${reason}\n`);
   }
   readline.on('line', (line) => {
-    void runSmokeCommand(adapter, line).then(async (output) => {
+    void runSmokeCommand(adapter, line, async (details) => new Promise((resolve) => {
+      process.stdout.write(`${details}\nType yes to confirm: `);
+      readline.once('line', (answer) => { resolve(answer.trim().toLowerCase() === 'yes'); });
+    }), (observedAt) => {
+      refreshClickAt = observedAt;
+      firstUpdateSlotAt = null;
+      rawUpdateSlotEvents = 0;
+      normalizedGuiEvents = 0;
+    }).then(async (output) => {
       if (output === 'QUIT') await shutdown('command');
       else { process.stdout.write(`${output}\n`); readline.prompt(); }
     }).catch((error: unknown) => { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); readline.prompt(); });

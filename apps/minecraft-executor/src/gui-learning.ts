@@ -48,8 +48,8 @@ export function deriveGuiLayoutCandidate(gui: ClientGuiSnapshot): GuiLayoutCandi
     const name = slot.rawName ?? slot.item.displayName;
     const lore = (slot.lore ?? slot.item.lore ?? []).join('\n');
     const text = `${name}\n${lore}`;
-    const match = state === 'AUCTION_PAGE' && slot.item.itemType === 'ANVIL'
-      ? (['REFRESH', /(?:)/] as const)
+    const match = state === 'AUCTION_PAGE'
+      ? slot.slot === 49 && isAnvil(slot.item.itemType) ? (['REFRESH', /(?:)/] as const) : actionKeywords.filter(([action]) => action !== 'REFRESH').find(([, pattern]) => pattern.test(text))
       : actionKeywords.find(([, pattern]) => pattern.test(text));
     if (match === undefined) return [];
     const [action] = match;
@@ -64,11 +64,13 @@ export function deriveGuiLayoutCandidate(gui: ClientGuiSnapshot): GuiLayoutCandi
       confidence: 0.6,
     }];
   });
-  const listingSlotCandidates = gui.slots.flatMap((slot) => {
-    if (slot.item === null) return [];
-    const text = `${slot.rawName ?? slot.item.displayName}\n${(slot.lore ?? slot.item.lore ?? []).join('\n')}`;
-    return actionKeywords.some(([, pattern]) => pattern.test(text)) ? [] : [slot.slot];
-  });
+  const listingSlotCandidates = state === 'AUCTION_PAGE'
+    ? Array.from({ length: 45 }, (_, slot) => slot)
+    : gui.slots.flatMap((slot) => {
+      if (slot.item === null) return [];
+      const text = `${slot.rawName ?? slot.item.displayName}\n${(slot.lore ?? slot.item.lore ?? []).join('\n')}`;
+      return actionKeywords.some(([, pattern]) => pattern.test(text)) ? [] : [slot.slot];
+    });
   return {
     state,
     ...(pageNumber === null ? {} : { pageNumber }),
@@ -91,6 +93,10 @@ function workflowStatesFor(action: SemanticGameAction): readonly string[] {
     case 'CONFIRM_SELL': return ['SELL_FINAL_VALIDATION'];
     default: return ['SCANNING', 'VALIDATING', 'FINAL_VALIDATION', 'PURCHASED'];
   }
+}
+
+function isAnvil(itemType: string): boolean {
+  return itemType.toLowerCase() === 'minecraft:anvil' || itemType.toLowerCase() === 'anvil';
 }
 
 function escapePattern(value: string): string {

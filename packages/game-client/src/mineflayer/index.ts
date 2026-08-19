@@ -105,7 +105,11 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
       this.emit({ type: 'GUI_CLOSED', observedAt: new Date(), guiId });
     });
     bot.on('windowUpdate', (window: MineflayerWindow | null) => { if (window !== null) this.observeWindow(window, 'GUI_UPDATED'); });
-    bot.on('updateSlot', () => { if (bot.currentWindow !== null) this.observeWindow(bot.currentWindow, 'GUI_UPDATED'); else this.observeInventory(bot); });
+    bot.on('updateSlot', () => {
+      const observedAt = new Date();
+      this.emit({ type: 'RAW_OBSERVATION', observedAt, payload: { type: 'MINEFLAYER_UPDATE_SLOT' } });
+      if (bot.currentWindow !== null) this.observeWindow(bot.currentWindow, 'GUI_UPDATED'); else this.observeInventory(bot);
+    });
     bot.on('resourcePack', (...args: unknown[]) => { this.handleResourcePack(bot, args); });
     bot.on('messagestr', (message: string) => { this.emit({ type: 'CHAT_MESSAGE', observedAt: new Date(), message }); });
     bot.on('kicked', (reason: unknown) => {
@@ -119,7 +123,7 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
   private closeForcedWindow(bot: Bot, window: MineflayerWindow): boolean {
     if (this.options.exploitProtection === false) return false;
     const type = window.type.toLowerCase();
-    const title = extractWindowTitle(window).trim().toLowerCase();
+    const title = extractWindowTitle(window).readableTitle.trim().toLowerCase();
     const isSignEditor = type.includes('sign') || title.includes('sign');
     const isForcedEditor = type.includes('anvil') || title.includes('anvil') || title.includes('repair') || title.includes('smith');
     if (!isForcedEditor && !(this.options.closeForcedSignEditor === true && isSignEditor)) return false;
@@ -192,13 +196,25 @@ export function serializeItem(item: MineflayerItem) {
 function snapshotWindow(window: MineflayerWindow): ClientGuiSnapshot {
   const observedAt = new Date();
   const slots = window.slots.map((item, slot) => ({ slot, item: item === null ? null : serializeItem(item), ...(item?.displayName === undefined ? {} : { rawName: item.displayName }), ...(item?.lore === undefined ? {} : { lore: item.lore }) }));
-  const title = extractWindowTitle(window);
-  const signature = createHash('sha256').update(JSON.stringify({ id: window.id, title, slots })).digest('hex');
-  return { id: windowId(window), observedAt, title, slotCount: slots.length, slots, signature };
+  const { readableTitle, rawTitle } = extractWindowTitle(window);
+  const signature = createHash('sha256').update(JSON.stringify({ id: window.id, title: readableTitle, slots })).digest('hex');
+  return { id: windowId(window), observedAt, title: readableTitle, readableTitle, rawTitle, slotCount: slots.length, slots, signature };
 }
 
-export function extractWindowTitle(window: MineflayerWindow): string {
-  return typeof window.title === 'string' ? window.title : window.title?.toString() ?? window.type;
+export function extractWindowTitle(window: MineflayerWindow): { readonly readableTitle: string; readonly rawTitle: string } {
+  const title = window.title;
+  if (typeof title === 'string') return { readableTitle: title, rawTitle: title };
+  const rawTitle = safeJson(title);
+  return { readableTitle: readableComponentText(title) || window.type, rawTitle };
+}
+
+function readableComponentText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(readableComponentText).join('');
+  if (typeof value !== 'object' || value === null) return '';
+  const component = value as Record<string, unknown>;
+  const text = typeof component['value'] === 'string' ? component['value'] : typeof component['text'] === 'string' ? component['text'] : typeof component['translate'] === 'string' ? component['translate'] : '';
+  return `${text}${readableComponentText(component['extra'])}${readableComponentText(component['with'])}${readableComponentText(component['children'])}`;
 }
 
 export function formatKickReason(reason: unknown): { readonly rawReason: string; readonly readableReason: string } {

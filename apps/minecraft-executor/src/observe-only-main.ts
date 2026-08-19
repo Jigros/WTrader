@@ -31,7 +31,7 @@ client.subscribe((event) => {
     observedLayouts.set(layout.signature, layout);
     void layouts.persist(layout);
     const refresh = refreshObserver.observe(event.gui);
-    process.stdout.write(`Observed ${layout.state} GUI ${event.gui.id} ${event.gui.signature}${refresh === null ? '' : ` refresh=${refresh.latencyMs}ms slots=${refresh.changedSlots}`}\n`);
+    process.stdout.write(`Observed ${layout.state} GUI ${event.gui.id} ${event.gui.signature}${refresh === null ? '' : ` refreshFirstUpdate=${refresh.latencyMs}ms refreshComplete=${refresh.completeSnapshotLatencyMs}ms changedListings=${refresh.changedSlots.length} slots=${refresh.changedSlots.join(',')}`}\n`);
   }
 });
 await client.connect();
