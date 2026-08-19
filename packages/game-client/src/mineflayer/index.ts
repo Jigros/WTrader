@@ -190,7 +190,27 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
 }
 
 export function serializeItem(item: MineflayerItem) {
-  return { itemType: `minecraft:${item.name}`, displayName: item.displayName ?? item.name, quantity: item.count, ...(item.durabilityUsed === undefined ? {} : { durability: item.durabilityUsed }), enchantments: (item.enchants ?? []).map((enchantment) => ({ id: enchantment.name, level: enchantment.lvl })), ...(item.lore === undefined ? {} : { lore: item.lore }), ...(item.nbt === undefined ? {} : { relevantNbt: { nbt: item.nbt } }) };
+  const components = safeItemComponents(item.nbt);
+  return { itemType: `minecraft:${item.name}`, displayName: item.displayName ?? item.name, quantity: item.count, ...(item.durabilityUsed === undefined ? {} : { durability: item.durabilityUsed }), enchantments: (item.enchants ?? []).map((enchantment) => ({ id: enchantment.name, level: enchantment.lvl })), ...(item.lore === undefined ? {} : { lore: item.lore }), ...(Object.keys(components).length === 0 ? {} : { customMetadata: components }) };
+}
+
+function safeItemComponents(nbt: unknown): Readonly<Record<string, unknown>> {
+  if (typeof nbt !== 'object' || nbt === null) return {};
+  const source = nbt as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const key of ['display', 'custom_name', 'item_name', 'custom_data', 'custom_model_data', 'enchantments', 'damage', 'components']) {
+    if (source[key] !== undefined) result[key] = boundedMetadata(source[key]);
+  }
+  result['rawComponentKeys'] = Object.keys(source).slice(0, 32);
+  return result;
+}
+
+function boundedMetadata(value: unknown, depth = 0): unknown {
+  if (depth >= 4) return '[truncated]';
+  if (typeof value === 'string') return value.slice(0, 1024);
+  if (typeof value !== 'object' || value === null) return value;
+  if (Array.isArray(value)) return value.slice(0, 32).map((entry) => boundedMetadata(entry, depth + 1));
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, 32).map(([key, entry]) => [key, boundedMetadata(entry, depth + 1)]));
 }
 
 function snapshotWindow(window: MineflayerWindow): ClientGuiSnapshot {
@@ -198,7 +218,7 @@ function snapshotWindow(window: MineflayerWindow): ClientGuiSnapshot {
   const slots = window.slots.map((item, slot) => ({ slot, item: item === null ? null : serializeItem(item), ...(item?.displayName === undefined ? {} : { rawName: item.displayName }), ...(item?.lore === undefined ? {} : { lore: item.lore }) }));
   const { readableTitle, rawTitle } = extractWindowTitle(window);
   const signature = createHash('sha256').update(JSON.stringify({ id: window.id, title: readableTitle, slots })).digest('hex');
-  return { id: windowId(window), observedAt, title: readableTitle, readableTitle, rawTitle, slotCount: slots.length, slots, signature };
+  return { id: windowId(window), observedAt, title: readableTitle, readableTitle, rawTitle, windowType: window.type, slotCount: slots.length, slots, signature };
 }
 
 export function extractWindowTitle(window: MineflayerWindow): { readonly readableTitle: string; readonly rawTitle: string } {

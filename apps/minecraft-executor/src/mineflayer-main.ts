@@ -117,7 +117,19 @@ export function formatSlot(gui: ClientGuiSnapshot | null, slotArgument: string |
   const slot = parseSlotId(slotArgument);
   if (slot === null) return 'Usage: /slot <id>';
   const target = gui.slots.find((candidate) => candidate.slot === slot);
-  return target === undefined ? `slot=${slot} is missing` : JSON.stringify(target, null, 2);
+  return target === undefined ? `slot=${slot} is missing` : JSON.stringify(safeSlotDebugData(target), null, 2);
+}
+
+function safeSlotDebugData(slot: ClientGuiSnapshot['slots'][number]): unknown {
+  return slot.item === null ? slot : { ...slot, item: { ...slot.item, customMetadata: boundedDebugValue(slot.item.customMetadata) } };
+}
+
+function boundedDebugValue(value: unknown, depth = 0): unknown {
+  if (depth >= 4) return '[truncated]';
+  if (typeof value === 'string') return value.slice(0, 1024);
+  if (typeof value !== 'object' || value === null) return value;
+  if (Array.isArray(value)) return value.slice(0, 32).map((entry) => boundedDebugValue(entry, depth + 1));
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, 32).map(([key, entry]) => [key, boundedDebugValue(entry, depth + 1)]));
 }
 
 function formatGui(prefix: string, gui: NonNullable<Awaited<ReturnType<MineflayerGameClientAdapter['getCurrentGui']>>>): string {

@@ -23,6 +23,18 @@ describe('seeded DonutSMP auction GUI', () => {
     expect(deriveGuiLayoutCandidate(gui).buttonCandidates).not.toContainEqual(expect.objectContaining({ action: 'REFRESH' }));
   });
 
+  it('learns purchase confirmation controls only in the observed context', () => {
+    const gui = { ...MockGameClientAdapter.gui('Confirm Purchase', [
+      { slot: 11, item: { itemType: 'minecraft:red_stained_glass_pane', displayName: 'Cancel', quantity: 1, enchantments: [] } },
+      { slot: 13, item: { itemType: 'minecraft:diamond', displayName: 'Diamond', quantity: 2, enchantments: [] } },
+      { slot: 15, item: { itemType: 'minecraft:lime_stained_glass_pane', displayName: 'Confirm', quantity: 1, enchantments: [] } },
+    ]), windowType: 'minecraft:generic_9x3' };
+    const layout = deriveGuiLayoutCandidate(gui);
+    expect(layout.state).toBe('PURCHASE_CONFIRMATION');
+    expect(layout.listingSlotCandidates).toEqual([13]);
+    expect(layout.buttonCandidates).toMatchObject([{ action: 'CANCEL', slot: 11 }, { action: 'CONFIRM_BUY', slot: 15 }]);
+  });
+
   it('maps the confirmed filter tooltip semantically', () => {
     const gui = MockGameClientAdapter.gui('Auction (Page 1)', [{ slot: 5, item: { itemType: 'HOPPER', displayName: 'Filter', quantity: 1, enchantments: [], lore: ['Click to Change'] } }]);
     const layout = deriveGuiLayoutCandidate(gui);

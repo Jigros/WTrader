@@ -1,7 +1,7 @@
 import type { ClientGuiSnapshot } from '@wtrader/game-client';
 import type { SemanticGameAction, SemanticSlotExpectation } from './semantic-actions.js';
 
-export type LearnedGuiState = 'AUCTION_PAGE' | 'UNKNOWN';
+export type LearnedGuiState = 'AUCTION_PAGE' | 'PURCHASE_CONFIRMATION' | 'UNKNOWN';
 
 export const auctionPageTitlePattern = /^Auction \(Page (\d+)\)$/;
 
@@ -31,8 +31,10 @@ const actionKeywords: ReadonlyArray<readonly [SemanticGameAction, RegExp]> = [
   ['BACK', /^back$/i],
 ];
 
-export function classifyGuiState(title: string): LearnedGuiState {
-  return auctionPageTitlePattern.test(title) ? 'AUCTION_PAGE' : 'UNKNOWN';
+export function classifyGuiState(title: string, windowType?: string): LearnedGuiState {
+  if (auctionPageTitlePattern.test(title)) return 'AUCTION_PAGE';
+  if (title === 'Confirm Purchase' && windowType === 'minecraft:generic_9x3') return 'PURCHASE_CONFIRMATION';
+  return 'UNKNOWN';
 }
 
 export function auctionPageNumber(title: string): number | null {
@@ -41,7 +43,7 @@ export function auctionPageNumber(title: string): number | null {
 }
 
 export function deriveGuiLayoutCandidate(gui: ClientGuiSnapshot): GuiLayoutCandidate {
-  const state = classifyGuiState(gui.title);
+  const state = classifyGuiState(gui.title, gui.windowType);
   const pageNumber = auctionPageNumber(gui.title);
   const buttonCandidates = gui.slots.flatMap((slot) => {
     if (slot.item === null) return [];
@@ -50,7 +52,9 @@ export function deriveGuiLayoutCandidate(gui: ClientGuiSnapshot): GuiLayoutCandi
     const text = `${name}\n${lore}`;
     const match = state === 'AUCTION_PAGE'
       ? slot.slot === 49 && isAnvil(slot.item.itemType) ? (['REFRESH', /(?:)/] as const) : actionKeywords.filter(([action]) => action !== 'REFRESH').find(([, pattern]) => pattern.test(text))
-      : actionKeywords.find(([, pattern]) => pattern.test(text));
+      : state === 'PURCHASE_CONFIRMATION'
+        ? purchaseConfirmationAction(slot.slot, slot.item.itemType)
+        : actionKeywords.find(([, pattern]) => pattern.test(text));
     if (match === undefined) return [];
     const [action] = match;
     return [{
@@ -66,6 +70,7 @@ export function deriveGuiLayoutCandidate(gui: ClientGuiSnapshot): GuiLayoutCandi
   });
   const listingSlotCandidates = state === 'AUCTION_PAGE'
     ? Array.from({ length: 45 }, (_, slot) => slot)
+    : state === 'PURCHASE_CONFIRMATION' ? [13]
     : gui.slots.flatMap((slot) => {
       if (slot.item === null) return [];
       const text = `${slot.rawName ?? slot.item.displayName}\n${(slot.lore ?? slot.item.lore ?? []).join('\n')}`;
@@ -93,6 +98,13 @@ function workflowStatesFor(action: SemanticGameAction): readonly string[] {
     case 'CONFIRM_SELL': return ['SELL_FINAL_VALIDATION'];
     default: return ['SCANNING', 'VALIDATING', 'FINAL_VALIDATION', 'PURCHASED'];
   }
+}
+
+function purchaseConfirmationAction(slot: number, itemType: string): readonly [SemanticGameAction, RegExp] | undefined {
+  const type = itemType.toLowerCase();
+  if (slot === 11 && type === 'minecraft:red_stained_glass_pane') return ['CANCEL', /(?:)/];
+  if (slot === 15 && type === 'minecraft:lime_stained_glass_pane') return ['CONFIRM_BUY', /(?:)/];
+  return undefined;
 }
 
 function isAnvil(itemType: string): boolean {

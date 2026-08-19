@@ -5,6 +5,7 @@ import type { GameClientAdapter } from '@wtrader/game-client';
 import { evaluateRisk } from '@wtrader/risk';
 import type { AccountRiskState, Opportunity } from '@wtrader/shared-types';
 import { type SemanticSlotExpectation, validateSemanticSlot } from './semantic-actions.js';
+import { classifyGuiState } from './gui-learning.js';
 
 export type SemanticPurchaseState =
   | 'DETECTED'
@@ -69,6 +70,9 @@ export class SemanticPurchaseWorkflow {
       const confirmationGui = await this.client.getCurrentGui();
       if (confirmationGui === null) return await this.failure(correlationId, 'MISSING_CONFIRMATION_GUI');
       state = 'CONFIRMATION_GUI';
+      if (classifyGuiState(confirmationGui.title, confirmationGui.windowType) !== 'PURCHASE_CONFIRMATION') return await this.failure(correlationId, 'INVALID_CONFIRMATION_GUI');
+      const preview = confirmationGui.slots.find((slot) => slot.slot === 13)?.item;
+      if (preview === undefined || preview === null || preview.itemType !== opportunity.listing.item.itemType || preview.quantity !== opportunity.listing.item.quantity) return await this.failure(correlationId, 'CONFIRMATION_PREVIEW_MISMATCH');
       state = 'FINAL_VALIDATION';
       const confirmValidation = validateSemanticSlot(confirmationGui, layout.confirmBuy, state);
       if (!confirmValidation.approved) return await this.failure(correlationId, confirmValidation.reason ?? 'CONFIRM_BUTTON_INVALID');
