@@ -1,203 +1,271 @@
-# Phase 4.1 — Seed Real DonutSMP Auction GUI
+# Phase 5 — Mineflayer Runtime Adapter
 
-We now have real screenshots and manually confirmed DonutSMP GUI information.
+The project should use Mineflayer as the primary headless Minecraft runtime.
 
-Do not redesign the project.
+Keep the existing Fabric observer only as an optional GUI/debug/reference capture tool.
 
-Update the discovery/GUI model using these confirmed facts, but do not hardcode unknown slot indices from screenshots.
+Do not redesign the trading core.
 
-## Confirmed real GUI
+Implement a production `MineflayerGameClientAdapter` behind the existing `GameClientAdapter`.
 
-Auction GUI title format:
+## Required Mineflayer Integration
+
+Implement:
+
+* Microsoft authentication/session support
+* connect/disconnect
+* reconnect state handling
+* chat/command sending
+* `windowOpen`
+* `windowClose`
+* current window snapshot
+* window `updateSlot`
+* player inventory updates
+* chat/system messages
+* item serialization
+* GUI title extraction
+* slot IDs
+* guarded `clickWindow`
+* connection/kick/error diagnostics
+
+Convert Mineflayer events into the same normalized internal events already used by WTrader.
+
+Do not create a second GUI architecture.
+
+## Donut Auction Observation
+
+When `/ah` opens:
 
 ```text
-Auction (Page 1)
-Auction (Page 2)
-...
+Mineflayer windowOpen
+→ classify GUI
+→ AUCTION_PAGE
+→ snapshot all slots
+→ identify semantic controls
+→ identify listing slots
 ```
 
-Recognize with a pattern equivalent to:
+Use the already confirmed title pattern:
 
 ```regex
 ^Auction \(Page (\d+)\)$
 ```
 
-Semantic state:
+Confirmed semantic fact:
 
 ```text
-AUCTION_PAGE
+minecraft:anvil inside AUCTION_PAGE = REFRESH
 ```
 
-Extract the page number from the title.
+Do not hardcode its slot.
 
-## Confirmed controls
+Use the actual Mineflayer window slot contents.
 
-### Refresh
+## New Listing Detection
 
-The **anvil item is the auction-page refresh button**.
+Use Mineflayer window slot update events.
 
-Map semantically as:
+Pipeline:
 
 ```text
-REFRESH
+window updateSlot
+→ changed slot
+→ listing parser
+→ listing fingerprint
+→ deduplicate
+→ cached valuation
+→ risk
+→ Redis lock
+→ purchase candidate
 ```
 
-Do NOT hardcode its slot until the Fabric bridge captures the actual structured slot.
+Do not reparse unchanged slots.
 
-Recognition should eventually validate:
+Do not query PostgreSQL synchronously in the buy hot path.
+
+## Refresh Loop
+
+After the real REFRESH slot is learned:
 
 ```text
-GUI = AUCTION_PAGE
-item type = ANVIL
-expected semantic role = REFRESH
+validate AUCTION_PAGE
+→ validate REFRESH semantic control
+→ guarded clickWindow(refreshSlot)
+→ observe slot updates
+→ process changed listings
 ```
 
-Use name/lore too if the real bridge provides them.
+Do not blindly click by slot number.
 
-### Filter
-
-A real control exists with tooltip:
+Measure:
 
 ```text
-Filter
-Click to Change
+refresh_sent_at
+first_slot_update_at
+listing_detected_at
+decision_at
+buy_click_at
+confirmation_at
 ```
 
-Semantic action:
+## Purchase Flow
+
+Learn and implement the actual DonutSMP purchase transition using Mineflayer windows.
+
+State machine:
 
 ```text
-CHANGE_FILTER
+DETECTED
+→ RESERVED
+→ VALIDATE_LISTING
+→ CLICK_LISTING
+→ WAIT_CONFIRMATION_GUI
+→ VALIDATE_ITEM_AND_PRICE
+→ CONFIRM_BUY
+→ VERIFY_PURCHASE
+→ PURCHASED / FAILED / UNKNOWN
 ```
 
-Capture its actual item ID, slot, name, lore, and transitions through the Fabric bridge.
+Before final confirmation verify:
 
-### Auction
+* current GUI
+* item fingerprint
+* quantity
+* price
+* confirmation control
+* available balance
+* listing freshness
+* risk state
 
-A real control exists with tooltip:
+If any critical field differs, abort.
+
+## Purchase Verification
+
+Use multiple signals:
+
+* inventory delta
+* balance delta if observable
+* chat/system message
+* GUI transition
+* listing disappearance
+
+Do not treat `clickWindow()` success as purchase success.
+
+If result is `UNKNOWN`, pause financial actions for that account and reconcile.
+
+## Selling
+
+Implement selling through the actual observed DonutSMP workflow.
+
+Do not guess slot numbers or commands.
+
+Use Mineflayer events to learn:
 
 ```text
-Auction
-Buy and sell items
+inventory item
+→ sell action/command
+→ sell GUI/state
+→ price entry
+→ confirmation
+→ listing verification
 ```
 
-Capture its actual item ID, slot, name, lore, and semantic behavior.
+Use the existing SellPriceEngine.
 
-Do not guess whether it is navigation, mode selection, or another action until observed live.
+Never intentionally list below cost basis.
 
-## Listing Grid
+## GUI Safety
 
-The main upper inventory grid contains auction listings.
-
-Do not infer listing slots purely from screenshots.
-
-During live capture classify slots by observed item metadata and stable surrounding controls.
-
-Learn:
+Every click must validate:
 
 ```text
-listingSlots[]
-controlSlots[]
-playerInventorySlots[]
+expected semantic GUI
+expected sync/window state
+expected slot
+expected item
+expected name/lore where available
+expected workflow state
 ```
 
-Persist them as part of the learned structural GUI layout.
-
-## Changed-Slot Detection
-
-On `AUCTION_PAGE`, the refresh workflow should eventually be:
+If an unknown GUI appears:
 
 ```text
-known AUCTION_PAGE
-→ identify validated REFRESH control
-→ click REFRESH
-→ receive GUI/slot updates
-→ compare previous and current auction snapshots
-→ process only changed/new listing slots
+STOP
+record full window
+log
+notify Discord
 ```
 
-A refresh click must be guarded by:
+## Diagnostics
+
+Persist exact Mineflayer connection diagnostics:
 
 ```text
-correct GUI title/signature
-correct semantic button
-correct item identity
-known slot from live discovery
+version
+server version
+kick reason
+window title
+window type
+window id
+slot changes
+last command
+last GUI transition
+protocol/client errors
 ```
 
-Never click an anvil merely because an anvil exists somewhere in an unknown GUI.
+https://github.com/PrismarineJS/mineflayer/issues/3899 use this fix for donut smp connection
 
-## Important Optimization
+## Fabric Observer
 
-Because refresh is a critical path, instrument:
+Do not delete it.
+
+Its role becomes:
 
 ```text
-refresh_click_sent_at
-first_gui_update_at
-first_changed_listing_detected_at
-listing_parsed_at
-opportunity_decided_at
+reference capture
+GUI comparison
+normal-client observation
+fixture generation
 ```
 
-Calculate:
+It should not be required for normal WTrader operation.
+
+## Tests
+
+Add Mineflayer adapter tests using mocks/fixtures for:
+
+* window open
+* window close
+* slot updates
+* duplicate slot update suppression
+* item serialization
+* guarded click
+* AH recognition
+* refresh recognition
+* purchase state transitions
+* disconnect
+* kick reason capture
+* reconnection
+
+Keep all current tests passing.
+
+## Final Report
+
+Report:
 
 ```text
-refresh_to_update_ms
-update_to_parse_ms
-parse_to_decision_ms
+Mineflayer adapter status
+Minecraft version used
+authentication status
+AUCTION_PAGE detection status
+window/slot observation status
+refresh detection status
+purchase execution status
+selling execution status
+real Donut connection status
+exact kick/error if connection fails
+tests
+real latency if connection succeeded
 ```
 
-## Fabric Bridge Work Still Required
-
-The current Fabric scaffold is not enough.
-
-Implement the actual Fabric event hooks required to stream:
-
-```text
-screen opened
-screen closed
-screen title
-screen handler sync ID
-slot ID
-slot item ID
-item count
-display name
-lore
-relevant components/NBT
-slot changed
-manual slot click
-inventory state
-chat messages
-```
-
-to the existing local backend bridge.
-
-Observation mode remains default.
-
-## Real Capture Goal
-
-Once Fabric hooks work, the owner should only need to:
-
-1. launch Minecraft and join DonutSMP;
-2. open `/ah`;
-3. hover/click Filter;
-4. use the anvil refresh button;
-5. navigate pages;
-6. click one cheap listing and cancel the purchase;
-7. demonstrate the sell flow.
-
-The recorder should learn the actual slots and transitions automatically.
-
-## Update Phase 4 Status
-
-After implementing the hooks but before live capture, report:
-
-```text
-real GUI state seeded: AUCTION_PAGE
-confirmed semantic controls: REFRESH, CHANGE_FILTER
-structured live capture: pending/working
-actual slot IDs: pending live capture
-purchase flow: pending live capture
-sell flow: pending live capture
-```
-
-Do not claim the complete DonutSMP GUI is learned until structured live events confirm it.
+Do not spend time on additional strategies or UI features until the Mineflayer runtime path works.

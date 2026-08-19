@@ -45,6 +45,14 @@ const tradingConfigSchema = z.object({
     allowedCommands: z.array(z.string().regex(/^\/[a-zA-Z0-9_-]+$/)),
     clickConfirmationRequired: z.boolean(),
   }),
+  mineflayer: z.object({
+    host: z.string().min(1),
+    port: z.number().int().min(1).max(65535).default(25565),
+    username: z.string().min(1),
+    version: z.string().min(1).optional(),
+    profilesFolder: z.string().min(1).optional(),
+    reconnectDelayMs: z.number().int().positive().default(5_000),
+  }).optional(),
   bridge: z.object({
     host: z.string().default('127.0.0.1'),
     port: z.number().int().min(1024).max(65535).default(32100),
