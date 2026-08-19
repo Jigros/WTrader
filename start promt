@@ -1,138 +1,26 @@
-# Codex Task — Add Mineflayer Smoke-Test Runner
+Add protocol-level disconnect diagnostics to Mineflayer smoke runner.
 
-WTrader already contains `MineflayerGameClientAdapter`, but there is currently no executable CLI/runtime entry point for it.
+Observed:
+- server ping reports 26.1.2
+- client forced to 1.21.11
+- CLIENT_CONNECTED succeeds
+- server immediately kicks with "Invalid sequence"
 
-Do not redesign the adapter.
+Add OBSERVE-ONLY logging for the last ~30 inbound/outbound packet names before kick:
+- packet name
+- direction
+- timestamp
+- state (configuration/play)
+- do not dump auth tokens or sensitive payloads
 
-Create:
+On kick print:
+- readableReason
+- negotiated client version
+- server ping version
+- last inbound packet names
+- last outbound packet names
 
-```text
-apps/minecraft-executor/src/mineflayer-main.ts
-```
+Keep a bounded ring buffer.
+Do not modify packets or connection behavior.
 
-and add package script:
-
-```json
-"mineflayer": "tsx apps/minecraft-executor/src/mineflayer-main.ts"
-```
-
-The runner must instantiate the existing `MineflayerGameClientAdapter`.
-
-Read configuration from environment variables:
-
-```text
-MINECRAFT_HOST
-MINECRAFT_PORT
-MINECRAFT_USERNAME
-MINECRAFT_VERSION
-MINECRAFT_PROFILES_FOLDER
-```
-
-Defaults:
-
-```text
-MINECRAFT_PORT=25565
-MINECRAFT_PROFILES_FOLDER=.minecraft-auth
-```
-
-Do not hardcode credentials.
-
-## Runtime behavior
-
-On start:
-
-1. print sanitized connection configuration;
-2. subscribe to all normalized `GameClientEvent`s;
-3. connect;
-4. wait for READY;
-5. print connection/kick/error diagnostics;
-6. remain running until SIGINT/SIGTERM.
-
-Do not automatically buy or sell anything.
-
-## Interactive stdin commands
-
-Support a minimal local debug console:
-
-```text
-/ah
-/cmd <minecraft command>
-/gui
-/inventory
-/state
-/quit
-```
-
-`/ah` must call the existing:
-
-```ts
-adapter.openAuctionHouse()
-```
-
-`/cmd` must call:
-
-```ts
-adapter.executeCommand()
-```
-
-`/gui` prints the current normalized GUI snapshot in a readable form:
-
-```text
-title
-id
-slotCount
-
-for each non-empty slot:
-slot
-itemType
-displayName
-quantity
-lore
-```
-
-`/inventory` prints normalized inventory.
-
-`/state` prints adapter state.
-
-## Event logging
-
-For GUI events print concise structured output:
-
-```text
-[GUI_OPENED]
-title=Auction (Page 1)
-id=...
-slots=...
-
-slot=...
-item=minecraft:anvil
-name=...
-lore=...
-```
-
-For `GUI_UPDATED`, print changed information without flooding the terminal.
-
-For kicks/errors, print the exact raw reason.
-
-## Important
-
-Keep this runner observation/debug oriented.
-
-Do not add anti-bot bypass, fingerprint spoofing, CAPTCHA bypass, ban evasion, or protection-evasion logic.
-
-Do not add autonomous purchasing yet.
-
-## Validation
-
-Add tests where practical.
-
-Then run:
-
-```text
-pnpm lint
-pnpm typecheck
-pnpm build
-pnpm test
-```
-
-At the end print the exact command the owner should use to start the Mineflayer runtime.
+Run tests/typecheck/build.

@@ -37,7 +37,7 @@ mineflayer:
   username: owner
   resourcePackPolicy: deny
   exploitProtection: true
-  closeForcedSignEditor: false
+  closeForcedSignEditor: true
 bridge:
   host: 127.0.0.1
   port: 32100

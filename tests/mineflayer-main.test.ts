@@ -3,7 +3,7 @@ import { formatSmokeEvent, mineflayerOptionsFromEnvironment } from '../apps/mine
 
 describe('Mineflayer smoke runner helpers', () => {
   it('reads required configuration without credentials beyond username', () => {
-    expect(mineflayerOptionsFromEnvironment({ MINECRAFT_HOST: 'localhost', MINECRAFT_USERNAME: 'owner' })).toEqual({ host: 'localhost', port: 25565, username: 'owner', profilesFolder: '.minecraft-auth' });
+    expect(mineflayerOptionsFromEnvironment({ MINECRAFT_HOST: 'localhost', MINECRAFT_USERNAME: 'owner', MINECRAFT_EARLY_CLIENT_INFORMATION: 'true', MINECRAFT_BRAND: 'vanilla', MINECRAFT_LOCALE: 'en_us', MINECRAFT_VIEW_DISTANCE: '12' })).toEqual({ host: 'localhost', port: 25565, username: 'owner', profilesFolder: '.minecraft-auth', earlyClientInformation: true, brand: 'vanilla', locale: 'en_us', viewDistance: 12 });
     expect(() => mineflayerOptionsFromEnvironment({ MINECRAFT_HOST: 'localhost' })).toThrow('MINECRAFT_USERNAME is required');
   });
 

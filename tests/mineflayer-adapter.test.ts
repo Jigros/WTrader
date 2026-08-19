@@ -5,6 +5,7 @@ import type { Bot } from 'mineflayer';
 
 class BotFixture extends EventEmitter {
   version = '1.21.1';
+  _client = Object.assign(new EventEmitter(), { state: 'play', write: vi.fn() });
   currentWindow: { id: number; type: string; title: string; slots: ({ type: number; name: string; displayName: string; count: number } | null)[] } | null = null;
   inventory = { slots: [] as ({ type: number; name: string; displayName: string; count: number } | null)[] };
   chat = vi.fn();
@@ -129,11 +130,18 @@ describe('MineflayerGameClientAdapter', () => {
     const diagnostics: unknown[] = [];
     adapter.subscribe((event) => { if (event.type === 'RAW_OBSERVATION') diagnostics.push(event.payload); });
     await adapter.connect();
+    first._client.emit('packet', {}, { name: 'login', state: 'configuration' });
+    first._client.write('keep_alive', {});
     first.emit('kicked', 'denied');
     first.emit('end', 'lost');
     await vi.advanceTimersByTimeAsync(100);
     expect(factory).toHaveBeenCalledTimes(2);
-    expect(diagnostics).toContainEqual({ type: 'MINEFLAYER_KICKED', rawReason: '"denied"', readableReason: 'denied' });
+    const kick = diagnostics.find((diagnostic): diagnostic is { readonly type: string; readonly rawReason: string; readonly readableReason: string; readonly negotiatedClientVersion: string; readonly packetTrace: readonly { readonly name: string; readonly direction: string; readonly state: string }[] } => typeof diagnostic === 'object' && diagnostic !== null && (diagnostic as Record<string, unknown>)['type'] === 'MINEFLAYER_KICKED');
+    expect(kick?.rawReason).toBe('"denied"');
+    expect(kick?.readableReason).toBe('denied');
+    expect(kick?.negotiatedClientVersion).toBe('1.21.1');
+    expect(kick?.packetTrace).toContainEqual(expect.objectContaining({ name: 'login', direction: 'INBOUND', state: 'configuration' }));
+    expect(kick?.packetTrace).toContainEqual(expect.objectContaining({ name: 'keep_alive', direction: 'OUTBOUND', state: 'play' }));
     vi.useRealTimers();
   });
 });

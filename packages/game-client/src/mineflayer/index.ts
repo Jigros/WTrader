@@ -1,7 +1,16 @@
 import { createHash } from 'node:crypto';
-import { createBot, type Bot, type BotOptions, type MineflayerItem, type MineflayerWindow } from 'mineflayer';
+import { createBot, type Bot, type BotOptions, type MineflayerItem, type MineflayerWindow, type ProtocolClient, type ProtocolPacketMeta } from 'mineflayer';
 import type { GameClientAdapter } from '../adapter.js';
 import type { ClickSlotRequest, ClickSlotResult, ClientGuiSnapshot, CommandResult, GameClientEvent, GameClientState, InventorySnapshot, Unsubscribe } from '../models.js';
+
+export interface PacketTraceEntry {
+  readonly name: string;
+  readonly direction: 'INBOUND' | 'OUTBOUND';
+  readonly observedAt: string;
+  readonly state: string;
+}
+
+const maximumPacketTraceEntries = 30;
 
 export interface MineflayerConnectionOptions {
   readonly host: string;
@@ -13,6 +22,10 @@ export interface MineflayerConnectionOptions {
   readonly resourcePackPolicy?: 'deny' | 'allow-remote-http';
   readonly exploitProtection?: boolean;
   readonly closeForcedSignEditor?: boolean;
+  readonly earlyClientInformation?: boolean;
+  readonly brand?: string;
+  readonly locale?: string;
+  readonly viewDistance?: number;
   readonly botFactory?: (options: BotOptions) => Bot;
 }
 
@@ -25,6 +38,7 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private disconnectRequested = false;
   private lastWindowFingerprint: string | null = null;
+  private readonly packetTrace: PacketTraceEntry[] = [];
 
   constructor(private readonly options: MineflayerConnectionOptions) {}
 
@@ -33,8 +47,9 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
     this.disconnectRequested = false;
     this.state = 'CONNECTING';
     const factory = this.options.botFactory ?? createBot;
-    this.bot = factory({ host: this.options.host, ...(this.options.port === undefined ? {} : { port: this.options.port }), username: this.options.username, auth: 'microsoft', ...(this.options.version === undefined ? {} : { version: this.options.version }), ...(this.options.profilesFolder === undefined ? {} : { profilesFolder: this.options.profilesFolder }) });
+    this.bot = factory({ host: this.options.host, ...(this.options.port === undefined ? {} : { port: this.options.port }), username: this.options.username, auth: 'microsoft', ...(this.options.version === undefined ? {} : { version: this.options.version }), ...(this.options.profilesFolder === undefined ? {} : { profilesFolder: this.options.profilesFolder }), ...(this.options.brand === undefined ? {} : { brand: this.options.brand }), ...(this.options.viewDistance === undefined ? {} : { viewDistance: this.options.viewDistance }), ...(this.options.earlyClientInformation === true ? { clientSettings: { locale: this.options.locale ?? 'en_us', viewDistance: this.options.viewDistance ?? 10 } } : {}) });
     this.registerBot(this.bot);
+    this.observeProtocol(this.bot._client);
     return Promise.resolve();
   }
 
@@ -95,7 +110,7 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
     bot.on('messagestr', (message: string) => { this.emit({ type: 'CHAT_MESSAGE', observedAt: new Date(), message }); });
     bot.on('kicked', (reason: unknown) => {
       const diagnostic = formatKickReason(reason);
-      this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_KICKED', rawReason: diagnostic.rawReason, readableReason: diagnostic.readableReason } });
+      this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_KICKED', rawReason: diagnostic.rawReason, readableReason: diagnostic.readableReason, negotiatedClientVersion: bot.version ?? 'unknown', packetTrace: [...this.packetTrace] } });
     });
     bot.on('error', (error: Error) => { this.state = 'ERROR'; this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_ERROR', message: error.message } }); });
     bot.on('end', (reason: string) => { this.state = 'DISCONNECTED'; this.emit({ type: 'CLIENT_DISCONNECTED', observedAt: new Date(), reason }); this.scheduleReconnect(); });
@@ -129,6 +144,21 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
     const resourcePackBot = bot as Bot & { acceptResourcePack: () => void; denyResourcePack: () => void };
     if (accepted) resourcePackBot.acceptResourcePack(); else resourcePackBot.denyResourcePack();
     this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_RESOURCE_PACK', accepted, ...(url === undefined ? {} : { url }), ...(accepted ? {} : { reason: policy === 'deny' ? 'Resource packs are disabled by policy' : 'Resource-pack URL is not a public HTTP(S) URL' }) } });
+  }
+
+  private observeProtocol(client: ProtocolClient | undefined): void {
+    if (client === undefined) return;
+    client.on('packet', (_data: unknown, metadata: ProtocolPacketMeta) => { this.recordPacket(metadata.name, 'INBOUND', metadata.state); });
+    const write = client.write.bind(client);
+    client.write = (name, parameters) => {
+      this.recordPacket(name, 'OUTBOUND', client.state);
+      write(name, parameters);
+    };
+  }
+
+  private recordPacket(name: string, direction: PacketTraceEntry['direction'], state: string): void {
+    this.packetTrace.push({ name, direction, observedAt: new Date().toISOString(), state });
+    if (this.packetTrace.length > maximumPacketTraceEntries) this.packetTrace.shift();
   }
 
   private observeWindow(window: MineflayerWindow, eventType: 'GUI_OPENED' | 'GUI_UPDATED'): void {

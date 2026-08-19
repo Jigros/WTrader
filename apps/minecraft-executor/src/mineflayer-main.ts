@@ -7,6 +7,10 @@ export interface SmokeTestEnvironment {
   readonly MINECRAFT_USERNAME?: string;
   readonly MINECRAFT_VERSION?: string;
   readonly MINECRAFT_PROFILES_FOLDER?: string;
+  readonly MINECRAFT_EARLY_CLIENT_INFORMATION?: string;
+  readonly MINECRAFT_BRAND?: string;
+  readonly MINECRAFT_LOCALE?: string;
+  readonly MINECRAFT_VIEW_DISTANCE?: string;
 }
 
 export function mineflayerOptionsFromEnvironment(environment: SmokeTestEnvironment): MineflayerConnectionOptions {
@@ -16,12 +20,18 @@ export function mineflayerOptionsFromEnvironment(environment: SmokeTestEnvironme
   if (username === undefined || username.length === 0) throw new Error('MINECRAFT_USERNAME is required');
   const port = Number(environment.MINECRAFT_PORT ?? '25565');
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error('MINECRAFT_PORT must be a valid TCP port');
+  const viewDistance = environment.MINECRAFT_VIEW_DISTANCE === undefined ? undefined : Number(environment.MINECRAFT_VIEW_DISTANCE);
+  if (viewDistance !== undefined && (!Number.isInteger(viewDistance) || viewDistance < 2 || viewDistance > 32)) throw new Error('MINECRAFT_VIEW_DISTANCE must be an integer from 2 through 32');
   return {
     host,
     port,
     username,
     profilesFolder: environment.MINECRAFT_PROFILES_FOLDER ?? '.minecraft-auth',
     ...(environment.MINECRAFT_VERSION === undefined || environment.MINECRAFT_VERSION.length === 0 ? {} : { version: environment.MINECRAFT_VERSION }),
+    ...(environment.MINECRAFT_EARLY_CLIENT_INFORMATION === 'true' ? { earlyClientInformation: true } : {}),
+    ...(environment.MINECRAFT_BRAND === undefined || environment.MINECRAFT_BRAND.length === 0 ? {} : { brand: environment.MINECRAFT_BRAND }),
+    ...(environment.MINECRAFT_LOCALE === undefined || environment.MINECRAFT_LOCALE.length === 0 ? {} : { locale: environment.MINECRAFT_LOCALE }),
+    ...(viewDistance === undefined ? {} : { viewDistance }),
   };
 }
 
@@ -36,8 +46,21 @@ export function formatSmokeEvent(event: GameClientEvent): string {
     case 'CLIENT_DISCONNECTED': return `[CLIENT_DISCONNECTED]${event.reason === undefined ? '' : ` reason=${event.reason}`}`;
     case 'BALANCE_UPDATED': return `[BALANCE_UPDATED] balance=${event.balance}`;
     case 'COMMAND_RESPONSE': return `[COMMAND_RESPONSE] accepted=${event.result.accepted}${event.result.message === undefined ? '' : ` message=${event.result.message}`}`;
-    case 'RAW_OBSERVATION': return `[DIAGNOSTIC] ${JSON.stringify(event.payload)}`;
+    case 'RAW_OBSERVATION': return formatDiagnostic(event.payload);
   }
+}
+
+function formatDiagnostic(payload: unknown): string {
+  if (!isKickDiagnostic(payload)) return `[DIAGNOSTIC] ${JSON.stringify(payload)}`;
+  const inbound = payload.packetTrace.filter((entry) => entry.direction === 'INBOUND').map((entry) => `${entry.observedAt} ${entry.state} ${entry.name}`).join(', ');
+  const outbound = payload.packetTrace.filter((entry) => entry.direction === 'OUTBOUND').map((entry) => `${entry.observedAt} ${entry.state} ${entry.name}`).join(', ');
+  return `[MINEFLAYER_KICKED]\nreadableReason=${payload.readableReason}\nnegotiatedClientVersion=${payload.negotiatedClientVersion}\nserverPingVersion=unavailable\nlastInboundPackets=${inbound || 'none'}\nlastOutboundPackets=${outbound || 'none'}`;
+}
+
+function isKickDiagnostic(payload: unknown): payload is { readonly type: 'MINEFLAYER_KICKED'; readonly readableReason: string; readonly negotiatedClientVersion: string; readonly packetTrace: readonly { readonly name: string; readonly direction: 'INBOUND' | 'OUTBOUND'; readonly observedAt: string; readonly state: string }[] } {
+  if (typeof payload !== 'object' || payload === null) return false;
+  const value = payload as Record<string, unknown>;
+  return value['type'] === 'MINEFLAYER_KICKED' && typeof value['readableReason'] === 'string' && typeof value['negotiatedClientVersion'] === 'string' && Array.isArray(value['packetTrace']);
 }
 
 export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line: string): Promise<string> {
