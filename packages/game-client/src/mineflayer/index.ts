@@ -68,6 +68,13 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
   getInventory(): Promise<InventorySnapshot> { return Promise.resolve(this.inventory); }
   getCurrentGui(): Promise<ClientGuiSnapshot | null> { return Promise.resolve(this.gui); }
 
+  getRawGuiSlot(slot: number): unknown {
+    const item = this.bot?.currentWindow?.slots[slot];
+    return item === undefined ? null : item;
+  }
+
+  getRawGuiWindow(): unknown { return this.bot?.currentWindow ?? null; }
+
   executeCommand(command: string): Promise<CommandResult> {
     if (this.bot === null || this.state !== 'READY') return Promise.resolve({ accepted: false, message: 'Mineflayer client is not ready' });
     this.bot.chat(command);

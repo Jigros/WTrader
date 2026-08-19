@@ -83,11 +83,13 @@ export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line
     }
     case '/gui': return formatGuiSnapshot(await adapter.getCurrentGui());
     case '/slot': return formatSlot(await adapter.getCurrentGui(), arguments_[0]);
+    case '/slotraw': return formatRawGuiSlot(adapter.getRawGuiSlot(parseSlotId(arguments_[0]) ?? -1), arguments_[0]);
+    case '/windowraw': return formatRawGuiWindow(adapter.getRawGuiWindow());
     case '/click': return clickGuiSlot(adapter, arguments_[0], confirmUnknownAction, onRefreshClick);
     case '/inventory': return formatInventory(await adapter.getInventory());
     case '/state': return `state=${await adapter.getState()}`;
     case '/quit': return 'QUIT';
-    default: return 'Commands: /ah, /cmd <minecraft command>, /gui, /slot <id>, /click <slot>, /inventory, /state, /quit';
+    default: return 'Commands: /ah, /cmd <minecraft command>, /gui, /slot <id>, /slotraw <id>, /windowraw, /click <slot>, /inventory, /state, /quit';
   }
 }
 
@@ -120,12 +122,40 @@ export function formatSlot(gui: ClientGuiSnapshot | null, slotArgument: string |
   return target === undefined ? `slot=${slot} is missing` : JSON.stringify(safeSlotDebugData(target), null, 2);
 }
 
+export function formatRawGuiSlot(item: unknown, slotArgument: string | undefined): string {
+  const slot = parseSlotId(slotArgument);
+  if (slot === null) return 'Usage: /slotraw <id>';
+  return item === null ? `slot=${slot} is empty or no active GUI` : JSON.stringify(allowlistedRawItem(item), null, 2);
+}
+
+export function formatRawGuiWindow(window: unknown): string {
+  if (window === null) return 'No active GUI';
+  const source = window as Record<string, unknown>;
+  const slots = Array.isArray(source['slots']) ? source['slots'] : [];
+  return JSON.stringify({
+    window: allowlistedObject(source, ['id', 'type', 'title', 'inventoryStart', 'inventoryEnd', 'firstEmptyContainerSlot', 'requiresConfirmation']),
+    nonEmptySlotRawKeys: slots.flatMap((item, slot) => item === null || typeof item !== 'object' ? [] : [{ slot, keys: Object.keys(item as Record<string, unknown>).slice(0, 32) }]),
+  }, null, 2);
+}
+
+function allowlistedRawItem(item: unknown): unknown {
+  if (typeof item !== 'object' || item === null) return item;
+  return allowlistedObject(item as Record<string, unknown>, ['name', 'type', 'count', 'metadata', 'displayName', 'customName', 'lore', 'nbt', 'components', 'rawData', 'rawNbt']);
+}
+
+function allowlistedObject(source: Record<string, unknown>, keys: readonly string[]): Readonly<Record<string, unknown>> {
+  const result: Record<string, unknown> = {};
+  for (const key of keys) if (source[key] !== undefined) result[key] = boundedDebugValue(source[key]);
+  result['componentKeys'] = Object.keys(source).filter((key) => /component|name|lore|nbt|data|json|text/i.test(key)).slice(0, 32);
+  return result;
+}
+
 function safeSlotDebugData(slot: ClientGuiSnapshot['slots'][number]): unknown {
   return slot.item === null ? slot : { ...slot, item: { ...slot.item, customMetadata: boundedDebugValue(slot.item.customMetadata) } };
 }
 
 function boundedDebugValue(value: unknown, depth = 0): unknown {
-  if (depth >= 4) return '[truncated]';
+  if (depth >= 6) return '[truncated]';
   if (typeof value === 'string') return value.slice(0, 1024);
   if (typeof value !== 'object' || value === null) return value;
   if (Array.isArray(value)) return value.slice(0, 32).map((entry) => boundedDebugValue(entry, depth + 1));

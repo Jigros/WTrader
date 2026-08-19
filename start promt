@@ -1,58 +1,48 @@
-Live Donut purchase confirmation discovered.
+Current /slot diagnostics still show no price/seller metadata in Confirm Purchase.
 
 Observed:
-AUCTION_PAGE -> click listing
-opens:
+Confirm Purchase / generic_9x3
+11 red pane
+13 purchased item preview
+15 lime pane
 
-title: "Confirm Purchase"
-window type: minecraft:generic_9x3
-slots: 63
+But /slot 13 only shows:
+itemType, displayName, quantity, durability, enchantments
 
-Relevant slots:
-11 = minecraft:red_stained_glass_pane
-13 = purchased item preview
-15 = minecraft:lime_stained_glass_pane
+Add a new debug command:
 
-Do NOT enable autonomous buying yet.
+/slotraw <id>
 
-Tasks:
+For the selected slot, safely inspect the ORIGINAL Mineflayer/Prismarine Item object before WTrader normalization.
 
-1. Extend /slot <id> debug output to include all safe item metadata/components:
-- display name component
+Print bounded/allowlisted fields only:
+- name
+- type
+- count
+- metadata
+- displayName
+- customName
 - lore
-- custom_name
-- item_name
-- custom_data
-- custom_model_data
-- enchantments
-- damage
-- any text-bearing components
-- raw component keys
+- nbt
+- components
+- component keys
+- any text/json/chat-component fields
+- any rawData/rawNbt fields exposed by the library
 
-Do not dump unbounded NBT; keep bounded safe serialization.
+Recursively serialize only:
+- primitives
+- short arrays
+- bounded objects
+- max depth 6
+- max total output size
+- redact obviously sensitive unrelated fields
 
-2. Add semantic classifier:
-Confirm Purchase + generic_9x3 => PURCHASE_CONFIRMATION candidate.
+Do not modify packets or trading behavior.
 
-3. Learn controls contextually:
-- red stained glass pane => CANCEL candidate
-- lime stained glass pane => CONFIRM candidate
-- center item slot => PURCHASE_PREVIEW candidate
+Also add:
+/windowraw
 
-Do not hardcode globally; require Confirm Purchase context.
+that prints bounded raw window metadata and non-empty slot raw metadata keys,
+because Donut may encode price/seller outside the normalized Item wrapper.
 
-4. Before any future confirm click require:
-- previous listing fingerprint matches preview item
-- quantity matches
-- price matches
-- confirmation window title matches
-- confirm control is lime pane
-- risk decision still valid
-
-5. Add smoke-runner commands:
-   /slot 11
-   /slot 13
-   /slot 15
-
-No autonomous confirm.
 Run tests/typecheck/build.
