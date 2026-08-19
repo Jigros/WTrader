@@ -88,7 +88,10 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
     bot.on('windowUpdate', (window: MineflayerWindow | null) => { if (window !== null) this.observeWindow(window, 'GUI_UPDATED'); });
     bot.on('updateSlot', () => { if (bot.currentWindow !== null) this.observeWindow(bot.currentWindow, 'GUI_UPDATED'); else this.observeInventory(bot); });
     bot.on('messagestr', (message: string) => { this.emit({ type: 'CHAT_MESSAGE', observedAt: new Date(), message }); });
-    bot.on('kicked', (reason: unknown) => { this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_KICKED', reason: String(reason) } }); });
+    bot.on('kicked', (reason: unknown) => {
+      const diagnostic = formatKickReason(reason);
+      this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_KICKED', rawReason: diagnostic.rawReason, readableReason: diagnostic.readableReason } });
+    });
     bot.on('error', (error: Error) => { this.state = 'ERROR'; this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_ERROR', message: error.message } }); });
     bot.on('end', (reason: string) => { this.state = 'DISCONNECTED'; this.emit({ type: 'CLIENT_DISCONNECTED', observedAt: new Date(), reason }); this.scheduleReconnect(); });
   }
@@ -131,6 +134,38 @@ function snapshotWindow(window: MineflayerWindow): ClientGuiSnapshot {
 
 export function extractWindowTitle(window: MineflayerWindow): string {
   return typeof window.title === 'string' ? window.title : window.title?.toString() ?? window.type;
+}
+
+export function formatKickReason(reason: unknown): { readonly rawReason: string; readonly readableReason: string } {
+  return { rawReason: safeJson(reason), readableReason: readableKickReason(reason) };
+}
+
+function safeJson(value: unknown): string {
+  const seen = new WeakSet();
+  try {
+    const serialized = JSON.stringify(value, (_key, nested: unknown) => {
+      if (typeof nested === 'bigint') return nested.toString();
+      if (typeof nested === 'object' && nested !== null) {
+        if (seen.has(nested)) return '[Circular]';
+        seen.add(nested);
+      }
+      return nested;
+    });
+    return serialized;
+  } catch {
+    return '[Unserializable kick reason]';
+  }
+}
+
+function readableKickReason(reason: unknown): string {
+  if (typeof reason === 'string') return reason;
+  if (typeof reason !== 'object' || reason === null) return String(reason);
+  const component = reason as Record<string, unknown>;
+  const text = component['text'];
+  const translate = component['translate'];
+  const extra = component['extra'];
+  const pieces = [typeof text === 'string' ? text : '', typeof translate === 'string' ? translate : '', ...(Array.isArray(extra) ? extra.map(readableKickReason) : [])].filter((piece) => piece.length > 0);
+  return pieces.length > 0 ? pieces.join(' ') : safeJson(reason);
 }
 
 function windowId(window: MineflayerWindow): string { return `mineflayer:${window.id}:${window.type}`; }

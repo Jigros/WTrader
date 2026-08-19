@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { MineflayerGameClientAdapter, itemFingerprint, serializeItem } from '@wtrader/game-client';
+import { formatKickReason, MineflayerGameClientAdapter, itemFingerprint, serializeItem } from '@wtrader/game-client';
 import type { Bot } from 'mineflayer';
 
 class BotFixture extends EventEmitter {
@@ -52,6 +52,20 @@ describe('MineflayerGameClientAdapter', () => {
     expect(bot.clickWindow).toHaveBeenCalledWith(0, 0, 0);
   });
 
+  it('formats string, structured, and circular kick reasons safely', () => {
+    const stringReason = formatKickReason('denied');
+    expect(stringReason.rawReason).toBe('"denied"');
+    expect(stringReason.readableReason).toBe('denied');
+    const componentReason = formatKickReason({ text: 'Disconnected:', extra: [{ text: ' banned' }] });
+    expect(componentReason.rawReason).toBe('{"text":"Disconnected:","extra":[{"text":" banned"}]}');
+    expect(componentReason.readableReason).toBe('Disconnected:  banned');
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    const circularReason = formatKickReason(circular);
+    expect(circularReason.rawReason).toBe('{"self":"[Circular]"}');
+    expect(circularReason.readableReason).toBe('{"self":"[Circular]"}');
+  });
+
   it('captures kick diagnostics and reconnects after end', async () => {
     vi.useFakeTimers();
     const first = new BotFixture();
@@ -65,7 +79,7 @@ describe('MineflayerGameClientAdapter', () => {
     first.emit('end', 'lost');
     await vi.advanceTimersByTimeAsync(100);
     expect(factory).toHaveBeenCalledTimes(2);
-    expect(diagnostics).toContainEqual({ type: 'MINEFLAYER_KICKED', reason: 'denied' });
+    expect(diagnostics).toContainEqual({ type: 'MINEFLAYER_KICKED', rawReason: '"denied"', readableReason: 'denied' });
     vi.useRealTimers();
   });
 });
