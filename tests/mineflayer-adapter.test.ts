@@ -75,6 +75,15 @@ describe('MineflayerGameClientAdapter', () => {
     await expect(adapter.getCurrentGui()).resolves.toMatchObject({ title: 'Repair & Name' });
   });
 
+  it('closes sign editors only when explicitly configured', async () => {
+    const bot = new BotFixture();
+    const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', closeForcedSignEditor: true, botFactory: () => bot as unknown as Bot });
+    await adapter.connect();
+    const window = { id: 6, type: 'minecraft:sign', title: 'Edit Sign Message', slots: [] };
+    bot.emit('windowOpen', window);
+    expect(bot.closeWindow).toHaveBeenCalledWith(window);
+  });
+
   it('denies resource packs by default and only allows public HTTP(S) URLs when opted in', async () => {
     const bot = new BotFixture();
     const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', botFactory: () => bot as unknown as Bot });

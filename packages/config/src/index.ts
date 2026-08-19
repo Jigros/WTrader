@@ -52,6 +52,9 @@ const tradingConfigSchema = z.object({
     version: z.string().min(1).optional(),
     profilesFolder: z.string().min(1).optional(),
     reconnectDelayMs: z.number().int().positive().default(5_000),
+    resourcePackPolicy: z.enum(['deny', 'allow-remote-http']).default('deny'),
+    exploitProtection: z.boolean().default(true),
+    closeForcedSignEditor: z.boolean().default(false),
   }).optional(),
   bridge: z.object({
     host: z.string().default('127.0.0.1'),

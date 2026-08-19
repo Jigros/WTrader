@@ -12,6 +12,7 @@ export interface MineflayerConnectionOptions {
   readonly reconnectDelayMs?: number;
   readonly resourcePackPolicy?: 'deny' | 'allow-remote-http';
   readonly exploitProtection?: boolean;
+  readonly closeForcedSignEditor?: boolean;
   readonly botFactory?: (options: BotOptions) => Bot;
 }
 
@@ -104,10 +105,16 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
     if (this.options.exploitProtection === false) return false;
     const type = window.type.toLowerCase();
     const title = extractWindowTitle(window).trim().toLowerCase();
-    if (!type.includes('anvil') && !title.includes('anvil') && !title.includes('repair') && !title.includes('smith')) return false;
+    const isSignEditor = type.includes('sign') || title.includes('sign');
+    const isForcedEditor = type.includes('anvil') || title.includes('anvil') || title.includes('repair') || title.includes('smith');
+    if (!isForcedEditor && !(this.options.closeForcedSignEditor === true && isSignEditor)) return false;
     const protectedBot = bot as Bot & { closeWindow?: (window: MineflayerWindow) => void };
+    if (protectedBot.closeWindow === undefined) {
+      this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_FORCED_WINDOW_CLOSE_UNAVAILABLE', windowType: type || 'unknown', title } });
+      return true;
+    }
     try {
-      protectedBot.closeWindow?.(window);
+      protectedBot.closeWindow(window);
       this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_FORCED_WINDOW_CLOSED', windowType: type || 'unknown', title } });
     } catch (error) {
       this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_FORCED_WINDOW_CLOSE_FAILED', message: error instanceof Error ? error.message : String(error) } });

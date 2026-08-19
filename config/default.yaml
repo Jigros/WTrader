@@ -32,6 +32,12 @@ execution:
   allowedCommands:
     - /ah
   clickConfirmationRequired: true
+mineflayer:
+  host: localhost
+  username: owner
+  resourcePackPolicy: deny
+  exploitProtection: true
+  closeForcedSignEditor: false
 bridge:
   host: 127.0.0.1
   port: 32100
