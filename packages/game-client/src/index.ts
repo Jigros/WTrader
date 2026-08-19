@@ -15,7 +15,7 @@ export type { GameClientAdapter } from './adapter.js';
 export type * from './models.js';
 export { ExternalGameClientAdapter, type ExternalTransport } from './external/index.js';
 export { MockGameClientAdapter, structuralGuiSignature, type MockPurchase } from './mock/index.js';
-export { extractWindowTitle, formatKickReason, MineflayerGameClientAdapter, itemFingerprint, serializeItem, type MineflayerConnectionOptions } from './mineflayer/index.js';
+export { extractWindowTitle, formatKickReason, isSafeResourcePackUrl, MineflayerGameClientAdapter, itemFingerprint, serializeItem, type MineflayerConnectionOptions } from './mineflayer/index.js';
 export { ReplayGameClientAdapter } from './replay/index.js';
 
 export interface ActionPolicyOptions {

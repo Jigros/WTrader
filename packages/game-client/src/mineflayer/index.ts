@@ -10,6 +10,8 @@ export interface MineflayerConnectionOptions {
   readonly version?: string;
   readonly profilesFolder?: string;
   readonly reconnectDelayMs?: number;
+  readonly resourcePackPolicy?: 'deny' | 'allow-remote-http';
+  readonly exploitProtection?: boolean;
   readonly botFactory?: (options: BotOptions) => Bot;
 }
 
@@ -75,6 +77,7 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
     bot.on('spawn', () => { this.state = 'READY'; this.emit({ type: 'CLIENT_CONNECTED', observedAt: new Date() }); this.observeInventory(bot); });
     bot.on('windowOpen', (window: MineflayerWindow | null) => {
       if (window === null) return;
+      if (this.closeForcedWindow(bot, window)) return;
       if ('on' in window && typeof window.on === 'function') window.on('updateSlot', () => { this.observeWindow(window, 'GUI_UPDATED'); });
       this.observeWindow(window, 'GUI_OPENED');
     });
@@ -87,6 +90,7 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
     });
     bot.on('windowUpdate', (window: MineflayerWindow | null) => { if (window !== null) this.observeWindow(window, 'GUI_UPDATED'); });
     bot.on('updateSlot', () => { if (bot.currentWindow !== null) this.observeWindow(bot.currentWindow, 'GUI_UPDATED'); else this.observeInventory(bot); });
+    bot.on('resourcePack', (...args: unknown[]) => { this.handleResourcePack(bot, args); });
     bot.on('messagestr', (message: string) => { this.emit({ type: 'CHAT_MESSAGE', observedAt: new Date(), message }); });
     bot.on('kicked', (reason: unknown) => {
       const diagnostic = formatKickReason(reason);
@@ -94,6 +98,30 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
     });
     bot.on('error', (error: Error) => { this.state = 'ERROR'; this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_ERROR', message: error.message } }); });
     bot.on('end', (reason: string) => { this.state = 'DISCONNECTED'; this.emit({ type: 'CLIENT_DISCONNECTED', observedAt: new Date(), reason }); this.scheduleReconnect(); });
+  }
+
+  private closeForcedWindow(bot: Bot, window: MineflayerWindow): boolean {
+    if (this.options.exploitProtection === false) return false;
+    const type = window.type.toLowerCase();
+    const title = extractWindowTitle(window).trim().toLowerCase();
+    if (!type.includes('anvil') && !title.includes('anvil') && !title.includes('repair') && !title.includes('smith')) return false;
+    const protectedBot = bot as Bot & { closeWindow?: (window: MineflayerWindow) => void };
+    try {
+      protectedBot.closeWindow?.(window);
+      this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_FORCED_WINDOW_CLOSED', windowType: type || 'unknown', title } });
+    } catch (error) {
+      this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_FORCED_WINDOW_CLOSE_FAILED', message: error instanceof Error ? error.message : String(error) } });
+    }
+    return true;
+  }
+
+  private handleResourcePack(bot: Bot, args: unknown[]): void {
+    const url = args.find((value): value is string => typeof value === 'string');
+    const policy = this.options.resourcePackPolicy ?? 'deny';
+    const accepted = policy === 'allow-remote-http' && url !== undefined && isSafeResourcePackUrl(url);
+    const resourcePackBot = bot as Bot & { acceptResourcePack: () => void; denyResourcePack: () => void };
+    if (accepted) resourcePackBot.acceptResourcePack(); else resourcePackBot.denyResourcePack();
+    this.emit({ type: 'RAW_OBSERVATION', observedAt: new Date(), payload: { type: 'MINEFLAYER_RESOURCE_PACK', accepted, ...(url === undefined ? {} : { url }), ...(accepted ? {} : { reason: policy === 'deny' ? 'Resource packs are disabled by policy' : 'Resource-pack URL is not a public HTTP(S) URL' }) } });
   }
 
   private observeWindow(window: MineflayerWindow, eventType: 'GUI_OPENED' | 'GUI_UPDATED'): void {
@@ -166,6 +194,26 @@ function readableKickReason(reason: unknown): string {
   const extra = component['extra'];
   const pieces = [typeof text === 'string' ? text : '', typeof translate === 'string' ? translate : '', ...(Array.isArray(extra) ? extra.map(readableKickReason) : [])].filter((piece) => piece.length > 0);
   return pieces.length > 0 ? pieces.join(' ') : safeJson(reason);
+}
+
+export function isSafeResourcePackUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !isPrivateHost(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '0.0.0.0') return true;
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4 === null) return false;
+  const octets = ipv4.slice(1).map(Number);
+  if (octets.some((octet) => octet > 255)) return true;
+  const [first, second] = octets as [number, number, number, number];
+  return first === 10 || first === 127 || first === 0 || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168);
 }
 
 function windowId(window: MineflayerWindow): string { return `mineflayer:${window.id}:${window.type}`; }

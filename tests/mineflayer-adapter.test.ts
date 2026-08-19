@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { formatKickReason, MineflayerGameClientAdapter, itemFingerprint, serializeItem } from '@wtrader/game-client';
+import { formatKickReason, isSafeResourcePackUrl, MineflayerGameClientAdapter, itemFingerprint, serializeItem } from '@wtrader/game-client';
 import type { Bot } from 'mineflayer';
 
 class BotFixture extends EventEmitter {
@@ -9,6 +9,9 @@ class BotFixture extends EventEmitter {
   inventory = { slots: [] as ({ type: number; name: string; displayName: string; count: number } | null)[] };
   chat = vi.fn();
   quit = vi.fn();
+  acceptResourcePack = vi.fn();
+  denyResourcePack = vi.fn();
+  closeWindow = vi.fn();
   clickWindow = vi.fn(() => Promise.resolve());
 }
 
@@ -50,6 +53,48 @@ describe('MineflayerGameClientAdapter', () => {
     await expect(adapter.clickSlot({ slot: 0, expectedSignature: gui.signature, expectedItemFingerprint: itemFingerprint(serializeItem(anvil)) })).resolves.toMatchObject({ accepted: true });
     await expect(adapter.clickSlot({ slot: 0, expectedSignature: 'wrong' })).resolves.toMatchObject({ accepted: false });
     expect(bot.clickWindow).toHaveBeenCalledWith(0, 0, 0);
+  });
+
+  it('closes forced anvil, repair, and smithing windows by default', async () => {
+    const bot = new BotFixture();
+    const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', botFactory: () => bot as unknown as Bot });
+    await adapter.connect();
+    const forcedWindow = { id: 5, type: 'minecraft:anvil', title: 'Repair & Name', slots: [] };
+    bot.emit('windowOpen', forcedWindow);
+    expect(bot.closeWindow).toHaveBeenCalledWith(forcedWindow);
+    await expect(adapter.getCurrentGui()).resolves.toBeNull();
+  });
+
+  it('allows forced-window handling to be disabled', async () => {
+    const bot = new BotFixture();
+    const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', exploitProtection: false, botFactory: () => bot as unknown as Bot });
+    await adapter.connect();
+    const window = { id: 5, type: 'minecraft:anvil', title: 'Repair & Name', slots: [] };
+    bot.emit('windowOpen', window);
+    expect(bot.closeWindow).not.toHaveBeenCalled();
+    await expect(adapter.getCurrentGui()).resolves.toMatchObject({ title: 'Repair & Name' });
+  });
+
+  it('denies resource packs by default and only allows public HTTP(S) URLs when opted in', async () => {
+    const bot = new BotFixture();
+    const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', botFactory: () => bot as unknown as Bot });
+    await adapter.connect();
+    bot.emit('resourcePack', 'http://127.0.0.1:8080/pack.zip', 'hash');
+    expect(bot.denyResourcePack).toHaveBeenCalledOnce();
+    expect(bot.acceptResourcePack).not.toHaveBeenCalled();
+
+    const allowedBot = new BotFixture();
+    const allowedAdapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', resourcePackPolicy: 'allow-remote-http', botFactory: () => allowedBot as unknown as Bot });
+    await allowedAdapter.connect();
+    allowedBot.emit('resourcePack', 'https://cdn.example.com/pack.zip', 'hash');
+    expect(allowedBot.acceptResourcePack).toHaveBeenCalledOnce();
+  });
+
+  it('recognizes safe public resource-pack URLs', () => {
+    expect(isSafeResourcePackUrl('https://cdn.example.com/pack.zip')).toBe(true);
+    expect(isSafeResourcePackUrl('http://localhost:8080/pack.zip')).toBe(false);
+    expect(isSafeResourcePackUrl('http://192.168.1.1/pack.zip')).toBe(false);
+    expect(isSafeResourcePackUrl('file:///etc/passwd')).toBe(false);
   });
 
   it('formats string, structured, and circular kick reasons safely', () => {
