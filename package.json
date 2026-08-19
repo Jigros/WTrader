@@ -20,7 +20,8 @@
     "benchmark:hot-path": "tsx apps/benchmark/src/hot-path.ts",
     "simulate:e2e": "vitest run tests/e2e-trading.test.ts",
     "bridge:observe": "tsx apps/minecraft-executor/src/observe-only-main.ts",
-    "replay:session": "tsx apps/minecraft-executor/src/replay-session.ts"
+    "replay:session": "tsx apps/minecraft-executor/src/replay-session.ts",
+    "mineflayer": "tsx apps/minecraft-executor/src/mineflayer-main.ts"
   },
   "dependencies": {
     "ioredis": "^5.7.0",

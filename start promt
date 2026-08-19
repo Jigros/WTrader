@@ -1,401 +1,138 @@
-# Codex Task — Hybrid Market Engine Upgrade
+# Codex Task — Add Mineflayer Smoke-Test Runner
 
-Current WTrader architecture is working.
+WTrader already contains `MineflayerGameClientAdapter`, but there is currently no executable CLI/runtime entry point for it.
 
-Do not redesign the project.
+Do not redesign the adapter.
 
-Reference:
+Create:
 
-`https://github.com/tommywalteryespls-bit/Donut-Algorithm`
+```text
+apps/minecraft-executor/src/mineflayer-main.ts
+```
 
-Port and adapt the strongest market-analysis concepts from the reference while preserving WTrader's low-latency execution architecture.
+and add package script:
 
-## Implement
+```json
+"mineflayer": "tsx apps/minecraft-executor/src/mineflayer-main.ts"
+```
 
-Port/adapt:
+The runner must instantiate the existing `MineflayerGameClientAdapter`.
 
-* `ComparableSaleFinder`
-* robust historical market statistics
-* conservative fair-value estimation
-* complete net-profit calculation
+Read configuration from environment variables:
 
-Preserve WTrader's existing:
+```text
+MINECRAFT_HOST
+MINECRAFT_PORT
+MINECRAFT_USERNAME
+MINECRAFT_VERSION
+MINECRAFT_PROFILES_FOLDER
+```
 
-* EMA
-* hot valuation cache
-* Redis/in-memory hot path
-* latency model
-* competition/capture probability model
-* opportunity scoring
-* PostgreSQL
-* multi-bot architecture
+Defaults:
 
-Do not copy Java architecture or SQLite code.
+```text
+MINECRAFT_PORT=25565
+MINECRAFT_PROFILES_FOLDER=.minecraft-auth
+```
 
-## 1. Comparable Sales
+Do not hardcode credentials.
 
-Create a TypeScript equivalent such as:
+## Runtime behavior
+
+On start:
+
+1. print sanitized connection configuration;
+2. subscribe to all normalized `GameClientEvent`s;
+3. connect;
+4. wait for READY;
+5. print connection/kick/error diagnostics;
+6. remain running until SIGINT/SIGTERM.
+
+Do not automatically buy or sell anything.
+
+## Interactive stdin commands
+
+Support a minimal local debug console:
+
+```text
+/ah
+/cmd <minecraft command>
+/gui
+/inventory
+/state
+/quit
+```
+
+`/ah` must call the existing:
 
 ```ts
-ComparableSaleSelector
+adapter.openAuctionHouse()
 ```
 
-It must select only genuinely comparable historical sales.
-
-Consider:
-
-* normalized item fingerprint
-* metadata compatibility
-* quantity / unit-price normalization
-* lookback window
-* sale recency
-* malformed records
-* unsupported items
-* stale data
-
-Return accepted and rejected sales with reasons.
-
-## 2. Robust Statistics
-
-From accepted comparable sales calculate:
-
-```text
-min
-max
-mean
-median
-weighted median
-p25
-p40
-p75
-IQR
-MAD
-standard deviation
-coefficient of variation
-sales/hour
-sales/day
-most recent sale
-data age
-sample count
-```
-
-Keep the existing EMA as an additional WTrader signal.
-
-Do not replace EMA.
-
-## 3. Conservative Fair Value
-
-Replace the current single heuristic fair value with a hybrid estimator.
-
-Produce at least:
+`/cmd` must call:
 
 ```ts
-{
-  conservativeFairValue,
-  centralFairValue,
-  optimisticFairValue,
-  fastEstimate,
-  confidence
-}
+adapter.executeCommand()
 ```
 
-The conservative value should use completed/inferred-sale evidence first.
-
-Use ideas from Donut-Algorithm such as:
+`/gui` prints the current normalized GUI snapshot in a readable form:
 
 ```text
-weighted median
-p40
-credible active asks
+title
+id
+slotCount
+
+for each non-empty slot:
+slot
+itemType
+displayName
+quantity
+lore
 ```
 
-and apply conservative penalties for:
+`/inventory` prints normalized inventory.
+
+`/state` prints adapter state.
+
+## Event logging
+
+For GUI events print concise structured output:
 
 ```text
-falling market
-high volatility
-high visible supply
-low confidence
-stale history
+[GUI_OPENED]
+title=Auction (Page 1)
+id=...
+slots=...
+
+slot=...
+item=minecraft:anvil
+name=...
+lore=...
 ```
 
-Do not raise fair value aggressively merely because current asks are high.
+For `GUI_UPDATED`, print changed information without flooding the terminal.
 
-Preserve the existing WTrader EMA-based estimator as:
+For kicks/errors, print the exact raw reason.
+
+## Important
+
+Keep this runner observation/debug oriented.
+
+Do not add anti-bot bypass, fingerprint spoofing, CAPTCHA bypass, ban evasion, or protection-evasion logic.
+
+Do not add autonomous purchasing yet.
+
+## Validation
+
+Add tests where practical.
+
+Then run:
 
 ```text
-fastEstimate
+pnpm lint
+pnpm typecheck
+pnpm build
+pnpm test
 ```
 
-It may contribute to the final model but should not dominate reliable completed-sale history.
-
-## 4. Sales vs Listings
-
-Maintain strict separation:
-
-```text
-ASK_PRICE != CONFIRMED_SALE_PRICE
-```
-
-Historical confirmed/high-confidence inferred sales should be the strongest evidence for fair value.
-
-Current listings should mainly provide:
-
-```text
-competition
-market depth
-credible ask floor
-visible supply
-spread
-```
-
-Do not train sale-price statistics using every active listing.
-
-## 5. Net Profit Calculator
-
-Create a complete profit calculation similar in spirit to the reference:
-
-```text
-purchase price
-+ purchase fees
-+ flat acquisition costs
-+ expected sale fee
-+ configured safety buffer
-```
-
-Calculate:
-
-```text
-grossProfit
-netProfit
-ROI
-netROI
-capitalRequired
-```
-
-Use integer-safe money arithmetic.
-
-Do not use floating-point values for raw game currency.
-
-If Donut fees are currently unknown/configurable, support zero defaults and configurable fee rules.
-
-## 6. Preserve WTrader Improvements
-
-Do not remove:
-
-```text
-expected holding time
-sale probability
-competition score
-capture probability
-latency measurements
-capital efficiency
-```
-
-Final opportunity scoring should combine market value and execution reality.
-
-Conceptually:
-
-```text
-expectedNetProfit
-× saleProbability
-× confidence
-× captureProbability
-× liquidity
-──────────────────────────────
-capitalRequired
-× expectedHoldingTime
-```
-
-Keep each component separately visible for debugging.
-
-## 7. Fix Liquidity
-
-Do not define liquidity primarily from visible supply or sample count.
-
-Prefer:
-
-```text
-confirmed/inferred sales per hour
-median estimated sale time
-turnover
-active supply
-spread
-history quality
-```
-
-Keep `economicLiquidity` separate from:
-
-```text
-competitionScore
-```
-
-An item may be highly liquid but extremely competitive.
-
-## 8. Hot Path Requirement
-
-This is critical.
-
-Do NOT run comparable-sale SQL queries or heavy statistics after a new listing appears.
-
-Use:
-
-```text
-PostgreSQL historical data
-→ background market analytics
-→ precomputed MarketValuationSnapshot
-→ Redis/in-memory hot cache
-```
-
-Live path remains:
-
-```text
-new listing
-→ normalized item ID
-→ hot valuation lookup
-→ profit/risk calculation
-→ capture probability
-→ Redis lock
-→ purchase
-```
-
-No PostgreSQL history query in the purchase hot path.
-
-## 9. MarketValuationSnapshot
-
-Extend the cached model approximately to:
-
-```ts
-interface MarketValuationSnapshot {
-  marketItemId: string;
-
-  conservativeFairValue: bigint | null;
-  centralFairValue: bigint | null;
-  optimisticFairValue: bigint | null;
-
-  fastEstimate: bigint | null;
-  ema: bigint | null;
-  weightedMedian: bigint | null;
-  p40: bigint | null;
-
-  salesPerHour: number | null;
-  expectedHoldingMs: number | null;
-  saleProbability24h: number | null;
-
-  economicLiquidity: number;
-  competitionScore: number;
-  captureProbability: number;
-
-  confidence: number;
-  volatility: number;
-
-  computedAt: number;
-  validUntil: number;
-}
-```
-
-Adapt to existing types instead of duplicating models.
-
-## 10. Historical Sale Quality
-
-Use only:
-
-```text
-CONFIRMED
-HIGH_CONFIDENCE_INFERRED
-```
-
-sales for primary pricing.
-
-Keep:
-
-```text
-UNKNOWN
-CANCELLED
-EXPIRED
-```
-
-out of completed-sale valuation statistics.
-
-If insufficient trustworthy sales exist, reduce confidence or refuse automatic trading.
-
-## 11. Tests
-
-Add tests for:
-
-* comparable-sale selection
-* rejected non-comparable items
-* quantity normalization
-* weighted median
-* p40/p75
-* MAD/IQR
-* extreme outliers
-* stale sales
-* low sample size
-* falling market
-* inflated active asks
-* conservative fair value
-* fee-aware net profit
-* safety buffer
-* liquidity based on turnover
-* separate competition score
-* cached valuation hot path
-
-Regression example:
-
-```text
-confirmed sales:
-99
-100
-100
-101
-102
-
-one outlier:
-1000
-```
-
-Fair value must remain near the real market, not move toward 1000.
-
-Another:
-
-```text
-completed sales ≈ 100
-current asks = 150, 160, 170
-```
-
-The model must not suddenly conclude fair value is ~160 without supporting completed-sale evidence.
-
-## 12. Benchmark
-
-Re-run the existing hot-path benchmark.
-
-The new heavy historical calculations may run in background workers, but live opportunity evaluation must remain extremely fast.
-
-Report:
-
-```text
-old benchmark
-new benchmark
-difference
-```
-
-If hot-path latency regresses materially, profile and fix it.
-
-## Final Report
-
-Report only:
-
-```text
-reference concepts ported
-WTrader components preserved
-new fair-value formula/model
-new profit formula
-liquidity changes
-DB/schema changes
-tests
-old/new hot-path benchmark
-remaining limitations
-```
-
-Do not stop at analysis. Implement and validate it.
+At the end print the exact command the owner should use to start the Mineflayer runtime.
