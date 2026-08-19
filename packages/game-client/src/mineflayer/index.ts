@@ -73,7 +73,10 @@ export class MineflayerGameClientAdapter implements GameClientAdapter {
 
   private registerBot(bot: Bot): void {
     bot.on('spawn', () => { this.state = 'READY'; this.emit({ type: 'CLIENT_CONNECTED', observedAt: new Date() }); this.observeInventory(bot); });
-    bot.on('windowOpen', (window: MineflayerWindow) => { this.observeWindow(window, 'GUI_OPENED'); });
+    bot.on('windowOpen', (window: MineflayerWindow) => {
+      if ('on' in window && typeof window.on === 'function') window.on('updateSlot', () => { this.observeWindow(window, 'GUI_UPDATED'); });
+      this.observeWindow(window, 'GUI_OPENED');
+    });
     bot.on('windowClose', (window: MineflayerWindow) => { if (this.gui?.id === windowId(window)) { const guiId = this.gui.id; this.gui = null; this.lastWindowFingerprint = null; this.emit({ type: 'GUI_CLOSED', observedAt: new Date(), guiId }); } });
     bot.on('windowUpdate', (window: MineflayerWindow) => { this.observeWindow(window, 'GUI_UPDATED'); });
     bot.on('updateSlot', () => { if (bot.currentWindow !== null) this.observeWindow(bot.currentWindow, 'GUI_UPDATED'); else this.observeInventory(bot); });
@@ -114,9 +117,13 @@ export function serializeItem(item: MineflayerItem) {
 function snapshotWindow(window: MineflayerWindow): ClientGuiSnapshot {
   const observedAt = new Date();
   const slots = window.slots.map((item, slot) => ({ slot, item: item === null ? null : serializeItem(item), ...(item?.displayName === undefined ? {} : { rawName: item.displayName }), ...(item?.lore === undefined ? {} : { lore: item.lore }) }));
-  const title = typeof window.title === 'string' ? window.title : window.title?.toString() ?? window.type;
+  const title = extractWindowTitle(window);
   const signature = createHash('sha256').update(JSON.stringify({ id: window.id, title, slots })).digest('hex');
   return { id: windowId(window), observedAt, title, slotCount: slots.length, slots, signature };
+}
+
+export function extractWindowTitle(window: MineflayerWindow): string {
+  return typeof window.title === 'string' ? window.title : window.title?.toString() ?? window.type;
 }
 
 function windowId(window: MineflayerWindow): string { return `mineflayer:${window.id}:${window.type}`; }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { MineflayerGameClientAdapter, itemFingerprint, serializeItem } from '@wtrader/game-client';
+import type { Bot } from 'mineflayer';
 
 class BotFixture extends EventEmitter {
   version = '1.21.1';
@@ -16,7 +17,7 @@ const anvil = { type: 145, name: 'anvil', displayName: 'Refresh', count: 1 };
 describe('MineflayerGameClientAdapter', () => {
   it('normalizes window lifecycle and suppresses duplicate slot updates', async () => {
     const bot = new BotFixture();
-    const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', botFactory: () => bot });
+    const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', botFactory: () => bot as unknown as Bot });
     const events: string[] = [];
     adapter.subscribe((event) => { events.push(event.type); });
     await adapter.connect();
@@ -31,7 +32,7 @@ describe('MineflayerGameClientAdapter', () => {
 
   it('serializes items and validates click identity before clickWindow', async () => {
     const bot = new BotFixture();
-    const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', botFactory: () => bot });
+    const adapter = new MineflayerGameClientAdapter({ host: 'localhost', username: 'owner', botFactory: () => bot as unknown as Bot });
     await adapter.connect();
     bot.emit('spawn');
     bot.currentWindow = { id: 4, type: 'minecraft:chest', title: 'Auction (Page 1)', slots: [anvil] };

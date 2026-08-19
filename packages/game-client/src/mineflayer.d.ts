@@ -12,7 +12,7 @@ declare module 'mineflayer' {
     readonly enchants?: readonly { readonly name: string; readonly lvl: number }[];
   }
 
-  export interface MineflayerWindow {
+  export interface MineflayerWindow extends EventEmitter {
     readonly id: number;
     readonly type: string;
     readonly title?: string | { toString(): string };
