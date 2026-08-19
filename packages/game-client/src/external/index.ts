@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { InboundProtocolMessage, OutboundProtocolMessage } from '@wtrader/protocol';
 import { parseInboundMessage } from '@wtrader/protocol';
 import type { GameClientAdapter } from '../adapter.js';
@@ -51,35 +50,22 @@ export class ExternalGameClientAdapter implements GameClientAdapter {
     return Promise.resolve(this.inventory);
   }
 
-  async executeCommand(command: string): Promise<CommandResult> {
-    const response = await this.transport.send({ protocolVersion: 1, type: 'command.execute', requestId: randomUUID(), payload: { command } });
-    return typeof response === 'object' && response !== null && 'accepted' in response
-      ? { accepted: response.accepted === true }
-      : { accepted: true };
+  executeCommand(command: string): Promise<CommandResult> {
+    void command;
+    return Promise.reject(new Error('External game client is observe-only; outbound game actions are disabled'));
   }
 
-  async openAuctionHouse(): Promise<void> {
-    await this.transport.send({ protocolVersion: 1, type: 'auction.open', requestId: randomUUID(), payload: {} });
+  openAuctionHouse(): Promise<void> {
+    return Promise.reject(new Error('External game client is observe-only; outbound game actions are disabled'));
   }
 
   getCurrentGui(): Promise<ClientGuiSnapshot | null> {
     return Promise.resolve(this.gui);
   }
 
-  async clickSlot(request: ClickSlotRequest): Promise<ClickSlotResult> {
-    const response = await this.transport.send({
-      protocolVersion: 1,
-      type: 'slot.click',
-      requestId: randomUUID(),
-      payload: {
-        slot: request.slot,
-        ...(request.expectedSignature === undefined ? {} : { expectedSignature: request.expectedSignature }),
-        ...(request.expectedItemFingerprint === undefined ? {} : { expectedItemFingerprint: request.expectedItemFingerprint }),
-      },
-    });
-    return typeof response === 'object' && response !== null && 'accepted' in response
-      ? { accepted: response.accepted === true, changed: 'changed' in response && response.changed === true }
-      : { accepted: false, changed: false };
+  clickSlot(request: ClickSlotRequest): Promise<ClickSlotResult> {
+    void request;
+    return Promise.reject(new Error('External game client is observe-only; outbound game actions are disabled'));
   }
 
   subscribe(handler: (event: GameClientEvent) => void): Unsubscribe {
@@ -105,24 +91,55 @@ export class ExternalGameClientAdapter implements GameClientAdapter {
       case 'client.disconnected':
         this.state = 'DISCONNECTED';
         return { type: 'CLIENT_DISCONNECTED', observedAt, ...(message.payload.reason === undefined ? {} : { reason: message.payload.reason }) };
+      case 'gui.opened': {
+        const gui = message.payload as unknown as ClientGuiSnapshot;
+        this.gui = gui;
+        return { type: 'GUI_OPENED', observedAt, gui };
+      }
       case 'gui.snapshot': {
         const gui = message.payload as unknown as ClientGuiSnapshot;
+        this.gui = gui;
+        return { type: 'GUI_UPDATED', observedAt, gui };
+      }
+      case 'gui.slot_delta': {
+        if (this.gui === null || this.gui.id !== message.payload.guiId) return null;
+        const slots = this.gui.slots.filter((slot) => slot.slot !== message.payload.slot.slot);
+        slots.push(message.payload.slot as unknown as ClientGuiSnapshot['slots'][number]);
+        const gui: ClientGuiSnapshot = {
+          ...this.gui,
+          slots,
+          signature: message.payload.signature ?? this.gui.signature,
+          observedAt,
+        };
         this.gui = gui;
         return { type: 'GUI_UPDATED', observedAt, gui };
       }
       case 'balance.updated':
         this.balance = message.payload.balance;
         return { type: 'BALANCE_UPDATED', observedAt, balance: message.payload.balance };
+      case 'inventory.snapshot':
       case 'inventory.updated': {
-        const inventory = message.payload as unknown as InventorySnapshot;
+        const inventory = {
+          observedAt: message.payload.observedAt ?? observedAt,
+          entries: message.payload.entries,
+        } as InventorySnapshot;
+        this.inventory = inventory;
+        return { type: 'INVENTORY_UPDATED', observedAt, inventory };
+      }
+      case 'inventory.delta': {
+        const entries = this.inventory.entries.filter((entry) => entry.slot !== message.payload.slot);
+        if (message.payload.item !== null) entries.push({ slot: message.payload.slot, item: message.payload.item as unknown as InventorySnapshot['entries'][number]['item'] });
+        const inventory: InventorySnapshot = { observedAt, entries };
         this.inventory = inventory;
         return { type: 'INVENTORY_UPDATED', observedAt, inventory };
       }
       case 'chat.message':
         return { type: 'CHAT_MESSAGE', observedAt, message: message.payload.message };
+      case 'gui.closed':
       case 'screen.closed':
         this.gui = null;
         return { type: 'GUI_CLOSED', observedAt, guiId: message.payload.guiId };
+      case 'manual.click':
       case 'manual.slot_click':
         return { type: 'RAW_OBSERVATION', observedAt, payload: { type: message.type, ...message.payload } };
     }

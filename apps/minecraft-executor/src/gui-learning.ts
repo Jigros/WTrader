@@ -3,8 +3,11 @@ import type { SemanticGameAction, SemanticSlotExpectation } from './semantic-act
 
 export type LearnedGuiState = 'AUCTION_PAGE' | 'UNKNOWN';
 
+export const auctionPageTitlePattern = /^Auction \(Page (\d+)\)$/;
+
 export interface GuiLayoutCandidate {
   readonly state: LearnedGuiState;
+  readonly pageNumber?: number;
   readonly title: string;
   readonly titlePattern: string;
   readonly signature: string;
@@ -29,16 +32,25 @@ const actionKeywords: ReadonlyArray<readonly [SemanticGameAction, RegExp]> = [
 ];
 
 export function classifyGuiState(title: string): LearnedGuiState {
-  return /\b(?:auction|auctions|auction house|ah)\b/i.test(title) ? 'AUCTION_PAGE' : 'UNKNOWN';
+  return auctionPageTitlePattern.test(title) ? 'AUCTION_PAGE' : 'UNKNOWN';
+}
+
+export function auctionPageNumber(title: string): number | null {
+  const page = auctionPageTitlePattern.exec(title)?.[1];
+  return page === undefined ? null : Number(page);
 }
 
 export function deriveGuiLayoutCandidate(gui: ClientGuiSnapshot): GuiLayoutCandidate {
   const state = classifyGuiState(gui.title);
+  const pageNumber = auctionPageNumber(gui.title);
   const buttonCandidates = gui.slots.flatMap((slot) => {
     if (slot.item === null) return [];
     const name = slot.rawName ?? slot.item.displayName;
     const lore = (slot.lore ?? slot.item.lore ?? []).join('\n');
-    const match = actionKeywords.find(([, pattern]) => pattern.test(`${name}\n${lore}`));
+    const text = `${name}\n${lore}`;
+    const match = state === 'AUCTION_PAGE' && slot.item.itemType === 'ANVIL'
+      ? (['REFRESH', /(?:)/] as const)
+      : actionKeywords.find(([, pattern]) => pattern.test(text));
     if (match === undefined) return [];
     const [action] = match;
     return [{
@@ -46,7 +58,7 @@ export function deriveGuiLayoutCandidate(gui: ClientGuiSnapshot): GuiLayoutCandi
       guiSignature: gui.signature,
       slot: slot.slot,
       expectedItemType: slot.item.itemType,
-      namePattern: escapePattern(name),
+      ...(state === 'AUCTION_PAGE' && action === 'REFRESH' ? {} : { namePattern: escapePattern(name) }),
       ...(lore.length === 0 ? {} : { lorePattern: escapePattern(lore) }),
       workflowStates: workflowStatesFor(action),
       confidence: 0.6,
@@ -59,8 +71,9 @@ export function deriveGuiLayoutCandidate(gui: ClientGuiSnapshot): GuiLayoutCandi
   });
   return {
     state,
+    ...(pageNumber === null ? {} : { pageNumber }),
     title: gui.title,
-    titlePattern: state === 'AUCTION_PAGE' ? '\\b(?:auction|auctions|auction house|ah)\\b' : `^${escapePattern(gui.title)}$`,
+    titlePattern: state === 'AUCTION_PAGE' ? auctionPageTitlePattern.source : `^${escapePattern(gui.title)}$`,
     signature: gui.signature,
     slotCount: gui.slotCount,
     buttonCandidates,

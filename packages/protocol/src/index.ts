@@ -1,41 +1,58 @@
 import { z } from 'zod';
 
+const maximumTextLength = 4_096;
+const maximumSlots = 256;
+const maximumLoreLines = 128;
+const boundedText = z.string().max(maximumTextLength);
+const identifier = z.string().min(1).max(256);
+const metadata = z.record(z.string().max(128), z.unknown());
 const rawItemSchema = z.object({
-  itemType: z.string().min(1),
-  displayName: z.string(),
-  quantity: z.number().int().positive(),
-  durability: z.number().int().nonnegative().optional(),
-  enchantments: z.array(z.object({ id: z.string().min(1), level: z.number().int().nonnegative() })),
-  relevantNbt: z.record(z.string(), z.unknown()).optional(),
-  customMetadata: z.record(z.string(), z.unknown()).optional(),
-  lore: z.array(z.string()).optional(),
+  itemType: identifier,
+  displayName: boundedText,
+  quantity: z.number().int().positive().max(64),
+  durability: z.number().int().nonnegative().max(1_000_000).optional(),
+  enchantments: z.array(z.object({ id: identifier, level: z.number().int().nonnegative().max(255) })).max(64),
+  relevantNbt: metadata.optional(),
+  customMetadata: metadata.optional(),
+  lore: z.array(boundedText).max(maximumLoreLines).optional(),
 });
-
+const guiSlotSchema = z.object({
+  slot: z.number().int().nonnegative().max(maximumSlots - 1),
+  item: rawItemSchema.nullable(),
+  rawName: boundedText.optional(),
+  lore: z.array(boundedText).max(maximumLoreLines).optional(),
+  quantity: z.number().int().positive().max(64).optional(),
+  metadata: metadata.optional(),
+});
 const guiSchema = z.object({
-  id: z.string().min(1),
+  id: identifier,
   observedAt: z.coerce.date(),
-  title: z.string(),
-  slotCount: z.number().int().nonnegative(),
-  slots: z.array(z.object({
-    slot: z.number().int().nonnegative(),
-    item: rawItemSchema.nullable(),
-    rawName: z.string().optional(),
-    lore: z.array(z.string()).optional(),
-    quantity: z.number().int().positive().optional(),
-    metadata: z.record(z.string(), z.unknown()).optional(),
-  })),
-  signature: z.string().min(1),
+  title: boundedText,
+  slotCount: z.number().int().nonnegative().max(maximumSlots),
+  slots: z.array(guiSlotSchema).max(maximumSlots),
+  signature: identifier,
 });
+const frame = <Type extends string, T extends z.ZodType>(type: Type, payload: T) => z.object({
+  protocolVersion: z.literal(1), type: z.literal(type), sequence: z.number().int().nonnegative(), timestamp: z.number().int().nonnegative(), payload,
+});
+const inventoryEntrySchema = z.object({ slot: z.number().int().nonnegative().max(maximumSlots - 1), item: rawItemSchema });
+const inventoryDeltaSchema = z.object({ slot: z.number().int().nonnegative().max(maximumSlots - 1), item: rawItemSchema.nullable() });
 
 export const inboundProtocolMessageSchema = z.discriminatedUnion('type', [
-  z.object({ protocolVersion: z.literal(1), type: z.literal('client.connected'), sequence: z.number().int().nonnegative(), timestamp: z.number().int(), payload: z.object({}) }),
-  z.object({ protocolVersion: z.literal(1), type: z.literal('client.disconnected'), sequence: z.number().int().nonnegative(), timestamp: z.number().int(), payload: z.object({ reason: z.string().optional() }) }),
-  z.object({ protocolVersion: z.literal(1), type: z.literal('gui.snapshot'), sequence: z.number().int().nonnegative(), timestamp: z.number().int(), payload: guiSchema }),
-  z.object({ protocolVersion: z.literal(1), type: z.literal('balance.updated'), sequence: z.number().int().nonnegative(), timestamp: z.number().int(), payload: z.object({ balance: z.number().nonnegative() }) }),
-  z.object({ protocolVersion: z.literal(1), type: z.literal('inventory.updated'), sequence: z.number().int().nonnegative(), timestamp: z.number().int(), payload: z.object({ observedAt: z.coerce.date(), entries: z.array(z.object({ slot: z.number().int().nonnegative(), item: rawItemSchema })) }) }),
-  z.object({ protocolVersion: z.literal(1), type: z.literal('chat.message'), sequence: z.number().int().nonnegative(), timestamp: z.number().int(), payload: z.object({ message: z.string() }) }),
-  z.object({ protocolVersion: z.literal(1), type: z.literal('screen.closed'), sequence: z.number().int().nonnegative(), timestamp: z.number().int(), payload: z.object({ guiId: z.string().min(1) }) }),
-  z.object({ protocolVersion: z.literal(1), type: z.literal('manual.slot_click'), sequence: z.number().int().nonnegative(), timestamp: z.number().int(), payload: z.object({ slot: z.number().int().nonnegative(), guiId: z.string().min(1), guiSignature: z.string().min(1) }) }),
+  frame('client.connected', z.object({})),
+  frame('client.disconnected', z.object({ reason: boundedText.optional() })),
+  frame('gui.opened', guiSchema),
+  frame('gui.snapshot', guiSchema),
+  frame('gui.slot_delta', z.object({ guiId: identifier, slot: guiSlotSchema, signature: identifier.optional() })),
+  frame('gui.closed', z.object({ guiId: identifier })),
+  frame('balance.updated', z.object({ balance: z.number().nonnegative().max(1_000_000_000_000) })),
+  frame('inventory.snapshot', z.object({ observedAt: z.coerce.date().optional(), entries: z.array(inventoryEntrySchema).max(maximumSlots) })),
+  frame('inventory.delta', inventoryDeltaSchema),
+  frame('chat.message', z.object({ message: boundedText })),
+  frame('manual.click', z.object({ slot: z.number().int().nonnegative().max(maximumSlots - 1), guiId: identifier, guiSignature: identifier })),
+  frame('inventory.updated', z.object({ observedAt: z.coerce.date(), entries: z.array(inventoryEntrySchema).max(maximumSlots) })),
+  frame('screen.closed', z.object({ guiId: identifier })),
+  frame('manual.slot_click', z.object({ slot: z.number().int().nonnegative().max(maximumSlots - 1), guiId: identifier, guiSignature: identifier })),
 ]);
 
 export const outboundProtocolMessageSchema = z.discriminatedUnion('type', [

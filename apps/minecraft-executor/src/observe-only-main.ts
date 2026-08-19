@@ -18,10 +18,13 @@ const bridge = new LocalBridgeServer(config.bridge);
 const client = new ExternalGameClientAdapter(bridge);
 client.subscribe((event) => {
   void recorder.record(event);
-  if (event.type === 'RAW_OBSERVATION' && event.payload.type === 'manual.slot_click') {
-    const layout = observedLayouts.get(event.payload.guiSignature);
-    const action = layout?.buttonCandidates.find((candidate) => candidate.slot === event.payload.slot)?.action;
-    if (action !== undefined) refreshObserver.observedManualAction(action, event.observedAt);
+  if (event.type === 'RAW_OBSERVATION') {
+    const payload = event.payload;
+    if (isManualSlotClick(payload)) {
+      const layout = observedLayouts.get(payload.guiSignature);
+      const action = layout?.buttonCandidates.find((candidate) => candidate.slot === payload.slot)?.action;
+      if (action !== undefined) refreshObserver.observedManualAction(action, event.observedAt);
+    }
   }
   if (event.type === 'GUI_OPENED' || event.type === 'GUI_UPDATED') {
     const layout = deriveGuiLayoutCandidate(event.gui);
@@ -33,3 +36,9 @@ client.subscribe((event) => {
 });
 await client.connect();
 process.stdout.write(`Observe-only bridge listening on ws://${config.bridge.host}:${config.bridge.port} for ${sessionId}\n`);
+
+function isManualSlotClick(payload: unknown): payload is { readonly type: 'manual.slot_click'; readonly guiSignature: string; readonly slot: number } {
+  if (typeof payload !== 'object' || payload === null) return false;
+  const observation = payload as Record<string, unknown>;
+  return observation['type'] === 'manual.slot_click' && typeof observation['guiSignature'] === 'string' && typeof observation['slot'] === 'number';
+}

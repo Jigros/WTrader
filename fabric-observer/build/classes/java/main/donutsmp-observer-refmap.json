@@ -1,0 +1,14 @@
+{
+  "mappings": {
+    "io/wtrader/observer/mixin/HandledScreenAccessor": {
+      "getSlotAt": "method_2386(DD)Lnet/minecraft/class_1735;"
+    }
+  },
+  "data": {
+    "named:intermediary": {
+      "io/wtrader/observer/mixin/HandledScreenAccessor": {
+        "getSlotAt": "method_2386(DD)Lnet/minecraft/class_1735;"
+      }
+    }
+  }
+}
