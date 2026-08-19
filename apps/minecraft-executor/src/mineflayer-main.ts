@@ -1,6 +1,5 @@
 import { createInterface } from 'node:readline';
 import { MineflayerGameClientAdapter, type ClientGuiSnapshot, type GameClientEvent, type MineflayerConnectionOptions } from '@wtrader/game-client';
-import { classifyGuiState } from './gui-learning.js';
 import { guiSlotChanges } from './semantic-actions.js';
 
 export interface SmokeTestEnvironment {
@@ -69,7 +68,7 @@ function isKickDiagnostic(payload: unknown): payload is { readonly type: 'MINEFL
   return value['type'] === 'MINEFLAYER_KICKED' && typeof value['readableReason'] === 'string' && typeof value['negotiatedClientVersion'] === 'string' && Array.isArray(value['packetTrace']);
 }
 
-export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line: string, confirmUnknownAction: (details: string) => Promise<boolean> = () => Promise.resolve(false), onRefreshClick: (observedAt: Date) => void = () => {}): Promise<string> {
+export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line: string, confirmUnknownAction: (details: string) => Promise<boolean> = () => Promise.resolve(false)): Promise<string> {
   const [command, ...arguments_] = line.trim().split(/\s+/);
   switch (command) {
     case '/ah':
@@ -85,7 +84,7 @@ export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line
     case '/slot': return formatSlot(await adapter.getCurrentGui(), arguments_[0]);
     case '/slotraw': return formatRawGuiSlot(adapter.getRawGuiSlot(parseSlotId(arguments_[0]) ?? -1), arguments_[0]);
     case '/windowraw': return formatRawGuiWindow(adapter.getRawGuiWindow());
-    case '/click': return clickGuiSlot(adapter, arguments_[0], confirmUnknownAction, onRefreshClick);
+    case '/click': return clickGuiSlot(adapter, arguments_[0], confirmUnknownAction);
     case '/inventory': return formatInventory(await adapter.getInventory());
     case '/state': return `state=${await adapter.getState()}`;
     case '/quit': return 'QUIT';
@@ -93,18 +92,16 @@ export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line
   }
 }
 
-async function clickGuiSlot(adapter: MineflayerGameClientAdapter, slotArgument: string | undefined, confirmUnknownAction: (details: string) => Promise<boolean>, onRefreshClick: (observedAt: Date) => void): Promise<string> {
+async function clickGuiSlot(adapter: MineflayerGameClientAdapter, slotArgument: string | undefined, confirmUnknownAction: (details: string) => Promise<boolean>): Promise<string> {
   const gui = await adapter.getCurrentGui();
   if (gui === null) return 'No active GUI';
   const slot = parseSlotId(slotArgument);
   if (slot === null) return 'Usage: /click <slot>';
   const target = gui.slots.find((candidate) => candidate.slot === slot);
   if (target?.item === null || target === undefined) return `slot=${slot} is empty or missing`;
-  const knownRefresh = slot === 49 && target.item.itemType === 'minecraft:anvil' && classifyGuiState(gui.title) === 'AUCTION_PAGE';
   const details = formatGuiSlot(target);
-  if (!knownRefresh && !await confirmUnknownAction(`Click unknown action:\n${details}`)) return `Confirmation declined\n${details}`;
+  if (!await confirmUnknownAction(`Confirm guarded click:\n${details}`)) return `Confirmation declined\n${details}`;
   const clickedAt = new Date();
-  if (knownRefresh) onRefreshClick(clickedAt);
   const result = await adapter.clickSlot({ slot, expectedSignature: gui.signature });
   return `clickTimestamp=${clickedAt.toISOString()}\n${details}\naccepted=${result.accepted} changed=${result.changed}${result.message === undefined ? '' : ` message=${result.message}`}`;
 }
@@ -224,12 +221,7 @@ export async function startMineflayerSmokeTest(environment: SmokeTestEnvironment
     void runSmokeCommand(adapter, line, async (details) => new Promise((resolve) => {
       process.stdout.write(`${details}\nType yes to confirm: `);
       readline.once('line', (answer) => { resolve(answer.trim().toLowerCase() === 'yes'); });
-    }), (observedAt) => {
-      refreshClickAt = observedAt;
-      firstUpdateSlotAt = null;
-      rawUpdateSlotEvents = 0;
-      normalizedGuiEvents = 0;
-    }).then(async (output) => {
+    })).then(async (output) => {
       if (output === 'QUIT') await shutdown('command');
       else { process.stdout.write(`${output}\n`); readline.prompt(); }
     }).catch((error: unknown) => { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); readline.prompt(); });

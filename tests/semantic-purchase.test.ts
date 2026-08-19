@@ -25,10 +25,14 @@ describe('SemanticPurchaseWorkflow', () => {
     client.setGui(gui);
     const workflow = new SemanticPurchaseWorkflow(client, new InMemoryListingLock(), config);
     const result = await workflow.purchase(opportunity, { accountId: 'account', availableCapital: 20_000_000, dailyRealizedPnl: 0, consecutiveExecutionFailures: 0, positions: [], tradingPaused: false }, 'bot', {
-      buy: { action: 'BUY', guiSignature: gui.signature, slot: 0, expectedItemType: 'minecraft:lime_dye', workflowStates: ['VALIDATING'], confidence: 1 },
-      confirmBuy: { action: 'CONFIRM_BUY', guiSignature: 'unused', slot: 0, workflowStates: ['FINAL_VALIDATION'], confidence: 1 },
+      profile: {
+        matchesWindow: () => true,
+        listingSlots: () => [],
+        getActionSlot: () => ({ slot: 0, expectedItemType: 'minecraft:lime_dye' }),
+        validateActionSlot: () => true,
+      },
     });
     expect(result.state).toBe('FAILED');
-    expect(result.reason).toBe('BUTTON_ITEM_TYPE_MISMATCH');
+    expect(result.reason).toBe('BUY_PROFILE_ACTION_INVALID');
   });
 });

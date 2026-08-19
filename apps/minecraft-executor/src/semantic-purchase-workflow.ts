@@ -4,8 +4,8 @@ import { type ListingLock } from '@wtrader/execution';
 import type { GameClientAdapter } from '@wtrader/game-client';
 import { evaluateRisk } from '@wtrader/risk';
 import type { AccountRiskState, Opportunity } from '@wtrader/shared-types';
-import { type SemanticSlotExpectation, validateSemanticSlot } from './semantic-actions.js';
-import { classifyGuiState } from './gui-learning.js';
+import { type GuiAction, type GuiProfile, validateProfileAction } from './gui-profile.js';
+import { opaqueListingFingerprint, parseDonutPrice } from '../../market-data/src/auction-parser.js';
 
 export type SemanticPurchaseState =
   | 'DETECTED'
@@ -21,8 +21,9 @@ export type SemanticPurchaseState =
   | 'UNKNOWN';
 
 export interface SemanticPurchaseLayout {
-  readonly buy: SemanticSlotExpectation;
-  readonly confirmBuy: SemanticSlotExpectation;
+  readonly profile: GuiProfile;
+  readonly buyAction?: GuiAction;
+  readonly confirmAction?: GuiAction;
 }
 
 export interface SemanticPurchaseResult {
@@ -46,43 +47,41 @@ export class SemanticPurchaseWorkflow {
     layout: SemanticPurchaseLayout,
   ): Promise<SemanticPurchaseResult> {
     const correlationId = randomUUID();
-    let state: SemanticPurchaseState = 'DETECTED';
     if (!await this.locks.acquire(opportunity.listing.listingId, botId, this.config.risk.listingLockTtlMs)) {
       return { correlationId, state: 'FAILED', reason: 'LISTING_ALREADY_RESERVED', balanceAfter: await this.client.getBalance() };
     }
     try {
-      state = 'RESERVED';
       const initialGui = await this.client.getCurrentGui();
       const risk = evaluateRisk(opportunity, riskState, this.config);
       if (!risk.approved || initialGui === null) return await this.failure(correlationId, risk.approved ? 'MISSING_AUCTION_GUI' : risk.reasons.join(','));
-      state = 'VALIDATING';
       const listingSlot = initialGui.slots.find((slot) => slot.slot === opportunity.listing.auctionSlot);
       if (listingSlot?.item === null || listingSlot?.item === undefined || listingSlot.item.itemType !== opportunity.listing.item.itemType) {
         return await this.failure(correlationId, 'LISTING_ITEM_CHANGED');
       }
-      const buyValidation = validateSemanticSlot(initialGui, layout.buy, state);
-      if (!buyValidation.approved) return await this.failure(correlationId, buyValidation.reason ?? 'BUY_BUTTON_INVALID');
+      const buyAction = layout.buyAction ?? 'BUY';
+      const buySlot = validateProfileAction(layout.profile, buyAction, initialGui);
+      if (buySlot === null) return await this.failure(correlationId, 'BUY_PROFILE_ACTION_INVALID');
       const balanceBefore = await this.client.getBalance();
       if (balanceBefore === null || balanceBefore < opportunity.listing.priceTotal) return await this.failure(correlationId, 'INSUFFICIENT_BALANCE');
-      state = 'OPENING_PURCHASE';
-      const buyResult = await this.client.clickSlot({ slot: layout.buy.slot, expectedSignature: initialGui.signature });
+      const buyResult = await this.client.clickSlot({ slot: buySlot.slot, expectedSignature: initialGui.signature, ...(buySlot.expectedItemFingerprint === undefined ? {} : { expectedItemFingerprint: buySlot.expectedItemFingerprint }) });
       if (!buyResult.accepted) return await this.failure(correlationId, buyResult.message ?? 'BUY_ACTION_REJECTED');
       const confirmationGui = await this.client.getCurrentGui();
       if (confirmationGui === null) return await this.failure(correlationId, 'MISSING_CONFIRMATION_GUI');
-      state = 'CONFIRMATION_GUI';
-      if (classifyGuiState(confirmationGui.title, confirmationGui.windowType) !== 'PURCHASE_CONFIRMATION') return await this.failure(correlationId, 'INVALID_CONFIRMATION_GUI');
+      if (!layout.profile.matchesWindow(confirmationGui)) return await this.failure(correlationId, 'INVALID_CONFIRMATION_GUI');
       const preview = confirmationGui.slots.find((slot) => slot.slot === 13)?.item;
       if (preview === undefined || preview === null || preview.itemType !== opportunity.listing.item.itemType || preview.quantity !== opportunity.listing.item.quantity) return await this.failure(correlationId, 'CONFIRMATION_PREVIEW_MISMATCH');
-      state = 'FINAL_VALIDATION';
-      const confirmValidation = validateSemanticSlot(confirmationGui, layout.confirmBuy, state);
-      if (!confirmValidation.approved) return await this.failure(correlationId, confirmValidation.reason ?? 'CONFIRM_BUTTON_INVALID');
+      const previewPrice = preview.lore === undefined ? null : parseDonutPrice(preview.lore);
+      if (previewPrice !== opportunity.listing.priceTotal) return await this.failure(correlationId, 'CONFIRMATION_PRICE_MISMATCH');
+      const previewFingerprint = opaqueListingFingerprint(preview);
+      if (opportunity.listing.opaqueListingFingerprint !== undefined && previewFingerprint !== undefined && previewFingerprint !== opportunity.listing.opaqueListingFingerprint) return await this.failure(correlationId, 'CONFIRMATION_FINGERPRINT_MISMATCH');
+      const confirmAction = layout.confirmAction ?? 'CONFIRM_BUY';
+      const confirmSlot = validateProfileAction(layout.profile, confirmAction, confirmationGui);
+      if (confirmSlot === null) return await this.failure(correlationId, 'CONFIRM_PROFILE_ACTION_INVALID');
       const currentBalance = await this.client.getBalance();
       if (currentBalance !== balanceBefore) return await this.failure(correlationId, 'BALANCE_CHANGED_BEFORE_CONFIRMATION');
       if (!evaluateRisk(opportunity, riskState, this.config).approved) return await this.failure(correlationId, 'RISK_CHANGED_BEFORE_CONFIRMATION');
-      state = 'CONFIRM_ACTION_SENT';
-      const confirmResult = await this.client.clickSlot({ slot: layout.confirmBuy.slot, expectedSignature: confirmationGui.signature });
+      const confirmResult = await this.client.clickSlot({ slot: confirmSlot.slot, expectedSignature: confirmationGui.signature, ...(confirmSlot.expectedItemFingerprint === undefined ? {} : { expectedItemFingerprint: confirmSlot.expectedItemFingerprint }) });
       if (!confirmResult.accepted) return await this.failure(correlationId, confirmResult.message ?? 'CONFIRM_ACTION_REJECTED');
-      state = 'VERIFYING';
       const balanceAfter = await this.client.getBalance();
       const inventory = await this.client.getInventory();
       const itemPresent = inventory.entries.some((entry) => entry.item.itemType === opportunity.listing.item.itemType && entry.item.quantity >= opportunity.listing.item.quantity);

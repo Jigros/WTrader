@@ -4,7 +4,7 @@ import { normalizeItem } from '@wtrader/market-model';
 import { calculateMarketStatistics, type PriceObservation } from '@wtrader/pricing';
 import type { ClientGuiSnapshot } from '@wtrader/game-client';
 import type { AuctionListing, Opportunity } from '@wtrader/shared-types';
-import { listingFingerprint, type AuctionLayout, type LoreParser } from './auction-parser.js';
+import { listingFingerprint, opaqueListingFingerprint, type AuctionLayout, type LoreParser } from './auction-parser.js';
 import { HotMarketState, OpportunityQueue } from './hot-market.js';
 
 export interface AuctionObservationResult {
@@ -30,6 +30,7 @@ export class AuctionObserver {
       const metadata = this.parseLore(item.lore);
       if (metadata === null || metadata.priceTotal <= 0) continue;
       const normalized = normalizeItem(item);
+      const fingerprint = opaqueListingFingerprint(item);
       const listing: AuctionListing = {
         listingId: metadata.listingId ?? listingFingerprint(normalized.marketId, metadata, this.layout.page, slot, item.quantity),
         item,
@@ -42,6 +43,7 @@ export class AuctionObserver {
         auctionPage: this.layout.page,
         auctionSlot: slot,
         rawMetadata: { lore: item.lore, sourceGuiId: gui.id },
+        ...(fingerprint === undefined ? {} : { opaqueListingFingerprint: fingerprint }),
       };
       const update = this.hotMarkets.upsert(listing);
       listings.push(update.listing);

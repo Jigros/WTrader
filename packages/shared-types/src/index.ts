@@ -60,6 +60,7 @@ export interface AuctionListing {
   readonly auctionPage: number;
   readonly auctionSlot: number;
   readonly rawMetadata: Readonly<Record<string, unknown>>;
+  readonly opaqueListingFingerprint?: string;
 }
 
 export interface MarketStatistics {
