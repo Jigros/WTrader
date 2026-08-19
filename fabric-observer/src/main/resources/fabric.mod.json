@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "donutsmp-observer",
+  "version": "${version}",
+  "name": "DonutSMP Observer",
+  "environment": "client",
+  "entrypoints": { "client": ["io.wtrader.observer.DonutSmpObserverClient"] },
+  "depends": { "fabricloader": ">=0.16.10", "minecraft": "~1.21.1", "java": ">=21", "fabric-api": "*" }
+}

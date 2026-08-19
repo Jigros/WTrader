@@ -1,0 +1,287 @@
+# Codex Phase 4 — Real DonutSMP Session Capture
+
+Phase 3 is complete.
+
+Current state:
+
+* semantic GUI learning
+* changed-slot detection
+* guarded clicks
+* two-stage purchase validation
+* 24 passing tests
+* lint/typecheck/build/Compose passing
+* hot-path benchmark ~0.0167 ms/iteration
+
+Do not redesign the architecture.
+
+The next goal is to connect the system to a real authenticated Minecraft client and record the actual DonutSMP AH interaction lifecycle.
+
+## Main Goal
+
+Create a client-side bridge that streams structured Minecraft state to our backend.
+
+The owner will:
+
+1. launch Minecraft;
+2. authenticate manually;
+3. join DonutSMP manually;
+4. enable the client bridge.
+
+After that, the bridge should automatically send:
+
+```text
+screen open/close
+screen title
+slot updates
+item id
+display name
+lore
+quantity
+relevant metadata/NBT
+inventory changes
+chat messages
+connection state
+player-visible balance if observable
+mouse/slot actions performed by the owner
+```
+
+Use structured data, not screenshots.
+
+## Client Bridge
+
+Prefer a Fabric client mod.
+
+It should connect locally to the existing `ExternalGameClientAdapter` using WebSocket.
+
+Implement:
+
+```text
+Fabric client
+    ↓
+localhost WebSocket
+    ↓
+ExternalGameClientAdapter
+    ↓
+discovery + recorder
+```
+
+Authentication to Minecraft remains manual.
+
+
+## Observation Mode First
+
+The first real session must run in:
+
+```text
+OBSERVE_ONLY
+```
+
+The backend may learn and record states but must not send financial clicks.
+
+Record:
+
+```text
+GUI snapshots
+changed slots
+manual clicks
+GUI transitions
+chat results
+inventory changes
+timings
+```
+
+Persist sessions so they can be replayed later.
+
+## Learn the Actual DonutSMP Flow
+
+Record the owner manually performing:
+
+```text
+/ah
+→ browse first page
+→ next page
+→ previous page
+→ refresh if available
+→ click a listing
+→ inspect purchase confirmation
+→ cancel purchase
+```
+
+Then record one controlled real purchase of a very cheap item only after the owner explicitly enables financial execution.
+
+Also record the actual selling flow:
+
+```text
+select owned item
+→ initiate AH sell
+→ set price
+→ confirm
+→ verify listing exists
+→ cancel or allow sale
+```
+
+Do not guess command names or slot numbers.
+
+Learn them from observed actions and state transitions.
+
+## Session Recorder
+
+Persist a replayable timeline:
+
+```text
+timestamp
+client event
+GUI signature
+slot deltas
+manual action
+expected transition
+actual transition
+inventory delta
+chat
+latency
+```
+
+Create a command such as:
+
+```bash
+pnpm replay:session <session-id>
+```
+
+## Real GUI Map
+
+After capture, generate:
+
+```text
+docs/DONUT_GUI_MAP.md
+```
+
+containing discovered states such as:
+
+```text
+AUCTION_PAGE
+PURCHASE_CONFIRMATION
+SELL_FLOW
+SELL_CONFIRMATION
+OWN_LISTINGS
+UNKNOWN
+```
+
+For every known state record:
+
+```text
+title pattern
+structural signature
+semantic buttons
+listing slots
+known transitions
+confidence
+```
+
+## Real Purchase Validation
+
+Once real observations exist, verify the current purchase state machine against them.
+
+Required checks:
+
+```text
+listing still matches
+price still matches
+item fingerprint still matches
+correct confirmation GUI
+correct confirmation control
+inventory delta
+balance/chat evidence
+```
+
+Any mismatch must abort.
+
+## Real Sell Validation
+
+Verify the real listing workflow:
+
+```text
+correct inventory item selected
+correct quantity
+correct price
+correct GUI state
+correct confirmation
+listing visible afterwards
+```
+
+Do not consider a sell-listing successful until independently verified.
+
+## Latency
+
+Measure real timings:
+
+```text
+server/GUI event received
+→ changed slot detected
+→ listing parsed
+→ opportunity decision
+→ Redis lock
+→ action dispatched
+→ confirmation received
+```
+
+Report:
+
+```text
+p50
+p95
+p99
+```
+
+The internal benchmark is not enough; real client/server latency is now the important metric.
+
+## Safety Modes
+
+Support:
+
+```text
+OBSERVE_ONLY
+ASSISTED
+LIVE
+PAUSED
+```
+
+`OBSERVE_ONLY`:
+record only.
+
+`ASSISTED`:
+system proposes action, owner confirms.
+
+`LIVE`:
+existing guarded execution may act automatically.
+
+Default new installations to `OBSERVE_ONLY`.
+
+## Acceptance Criteria
+
+Phase 4 is complete when:
+
+1. Fabric bridge connects to backend locally.
+2. Real DonutSMP GUI snapshots are captured.
+3. Manual clicks are correlated with GUI transitions.
+4. AH page structure is learned.
+5. Purchase confirmation GUI is learned.
+6. Selling flow is learned.
+7. Real session replay works.
+8. Existing parser/state machine passes against real captured fixtures.
+9. Real latency metrics are recorded.
+10. No unknown sensitive state is clicked automatically.
+11. All existing tests still pass.
+
+At completion report only:
+
+```text
+real states learned
+real buttons learned
+purchase flow learned
+sell flow learned
+client bridge status
+real latency
+unknown states
+tests
+next step
+```

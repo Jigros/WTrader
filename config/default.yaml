@@ -1,0 +1,47 @@
+capital:
+  active: 20000000
+  maxTradePercent: 0.25
+  maxItemExposurePercent: 0.20
+trading:
+  sameDayExitPreferred: true
+  allowLossSelling: false
+  minimumAbsoluteProfit: 5000
+  dynamicRoi:
+    base: 0.02
+    volatilityWeight: 0.5
+    illiquidityWeight: 0.08
+    holdingHourWeight: 0.002
+    lowConfidencePenalty: 0.05
+    highTurnoverBonus: 0.01
+    minimum: 0.02
+    maximum: 0.75
+  minimumConfidence: MEDIUM
+  maxDailyLoss: 1000000
+  maxConsecutiveExecutionFailures: 3
+pricing:
+  emaAlpha: 0.25
+  outlierIqrMultiplier: 1.5
+  staleAfterMs: 30000
+  minimumSamples: 5
+risk:
+  unknownGuiAction: stop
+  staleMarketAction: pause
+  listingLockTtlMs: 5000
+execution:
+  safetyMode: OBSERVE_ONLY
+  allowedCommands:
+    - /ah
+  clickConfirmationRequired: true
+bridge:
+  host: 127.0.0.1
+  port: 32100
+  maximumFrameBytes: 262144
+market:
+  blacklistedItemTypes:
+    - minecraft:spawner
+selling:
+  minimumTick: 1
+  targetRoi: 0.05
+  minimumRepricingIntervalMs: 300000
+  minimumMeaningfulDelta: 100
+  maximumRepricesPerHour: 2

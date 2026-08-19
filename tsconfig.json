@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@wtrader/shared-types": ["packages/shared-types/src/index.ts"],
+      "@wtrader/config": ["packages/config/src/index.ts"],
+      "@wtrader/market-model": ["packages/market-model/src/index.ts"],
+      "@wtrader/pricing": ["packages/pricing/src/index.ts"],
+      "@wtrader/risk": ["packages/risk/src/index.ts"],
+      "@wtrader/execution": ["packages/execution/src/index.ts"],
+      "@wtrader/game-client": ["packages/game-client/src/index.ts"],
+      "@wtrader/database": ["packages/database/src/index.ts"],
+      "@wtrader/logging": ["packages/logging/src/index.ts"],
+      "@wtrader/protocol": ["packages/protocol/src/index.ts"],
+      "@wtrader/selling": ["packages/selling/src/index.ts"],
+      "@wtrader/metrics": ["packages/metrics/src/index.ts"]
+    },
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts", "eslint.config.js", "vitest.config.ts"]
+}
