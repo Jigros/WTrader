@@ -1,5 +1,14 @@
 import { createInterface } from 'node:readline';
+import { loadEnvironment, loadTradingConfig, type TradingConfig } from '@wtrader/config';
+import { Database } from '@wtrader/database';
+import { InMemoryListingLock } from '@wtrader/execution';
 import { MineflayerGameClientAdapter, type ClientGuiSnapshot, type GameClientEvent, type MineflayerConnectionOptions } from '@wtrader/game-client';
+import { normalizeItem } from '@wtrader/market-model';
+import type { AccountRiskState, Opportunity } from '@wtrader/shared-types';
+import { listingFingerprint, opaqueListingFingerprint, parseDonutPrice } from '../../market-data/src/auction-parser.js';
+import { donutGuiProfile, isDonutAuctionPage } from './donut-gui-profile.js';
+import { LiveBuyTestMode } from './live-buy-test-mode.js';
+import { SemanticPurchaseWorkflow } from './semantic-purchase-workflow.js';
 import { guiSlotChanges } from './semantic-actions.js';
 
 export interface SmokeTestEnvironment {
@@ -68,7 +77,11 @@ function isKickDiagnostic(payload: unknown): payload is { readonly type: 'MINEFL
   return value['type'] === 'MINEFLAYER_KICKED' && typeof value['readableReason'] === 'string' && typeof value['negotiatedClientVersion'] === 'string' && Array.isArray(value['packetTrace']);
 }
 
-export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line: string, confirmUnknownAction: (details: string) => Promise<boolean> = () => Promise.resolve(false)): Promise<string> {
+export interface BuyTestCommand {
+  execute(slot: number): Promise<{ readonly state: 'PURCHASED' | 'FAILED' | 'UNKNOWN'; readonly reason?: string }>;
+}
+
+export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line: string, confirmUnknownAction: (details: string) => Promise<boolean> = () => Promise.resolve(false), buyTest?: BuyTestCommand): Promise<string> {
   const [command, ...arguments_] = line.trim().split(/\s+/);
   switch (command) {
     case '/ah':
@@ -85,10 +98,18 @@ export async function runSmokeCommand(adapter: MineflayerGameClientAdapter, line
     case '/slotraw': return formatRawGuiSlot(adapter.getRawGuiSlot(parseSlotId(arguments_[0]) ?? -1), arguments_[0]);
     case '/windowraw': return formatRawGuiWindow(adapter.getRawGuiWindow());
     case '/click': return clickGuiSlot(adapter, arguments_[0], confirmUnknownAction);
+    case '/buytest': {
+      const slot = parseSlotId(arguments_[0]);
+      if (slot === null || slot < 0 || slot > 44) return 'Usage: /buytest <slot 0..44>';
+      if (buyTest === undefined) return 'Live buy test is not enabled';
+      const result = await buyTest.execute(slot);
+      return `buytest state=${result.state}${result.reason === undefined ? '' : ` reason=${result.reason}`}`;
+    }
     case '/inventory': return formatInventory(await adapter.getInventory());
     case '/state': return `state=${await adapter.getState()}`;
     case '/quit': return 'QUIT';
-    default: return 'Commands: /ah, /cmd <minecraft command>, /gui, /slot <id>, /slotraw <id>, /windowraw, /click <slot>, /inventory, /state, /quit';
+    case '/help': return 'Commands: /ah, /cmd <minecraft command>, /gui, /slot <id>, /slotraw <id>, /windowraw, /click <slot>, /buytest <slot 0..44>, /inventory, /state, /quit';
+    default: return 'Commands: /ah, /cmd <minecraft command>, /gui, /slot <id>, /slotraw <id>, /windowraw, /click <slot>, /buytest <slot 0..44>, /inventory, /state, /quit';
   }
 }
 
@@ -109,6 +130,63 @@ async function clickGuiSlot(adapter: MineflayerGameClientAdapter, slotArgument: 
 function parseSlotId(value: string | undefined): number | null {
   if (value === undefined || !/^\d+$/.test(value)) return null;
   return Number(value);
+}
+
+function buyTestOpportunity(gui: ClientGuiSnapshot, slot: number): Opportunity {
+  if (!isDonutAuctionPage(gui)) throw new Error('BUYTEST_REQUIRES_DONUT_AUCTION_WINDOW');
+  const entry = gui.slots.find((candidate) => candidate.slot === slot);
+  if (entry?.item === null || entry === undefined || entry.item.lore === undefined) throw new Error('BUYTEST_LISTING_MISSING');
+  const priceTotal = parseDonutPrice(entry.item.lore);
+  if (priceTotal === null) throw new Error('BUYTEST_PRICE_UNREADABLE');
+  const normalized = normalizeItem(entry.item);
+  const listingId = listingFingerprint(normalized.marketId, { priceTotal }, 0, slot, entry.item.quantity);
+  const fingerprint = opaqueListingFingerprint(entry.item);
+  if (fingerprint === undefined) throw new Error('BUYTEST_LISTING_FINGERPRINT_MISSING');
+  const listing = {
+    listingId,
+    item: entry.item,
+    normalizedItemId: normalized.marketId,
+    priceTotal,
+    pricePerUnit: priceTotal / entry.item.quantity,
+    firstSeenAt: gui.observedAt,
+    lastSeenAt: gui.observedAt,
+    auctionPage: 0,
+    auctionSlot: slot,
+    rawMetadata: { lore: entry.item.lore, sourceGuiId: gui.id },
+    opaqueListingFingerprint: fingerprint,
+  };
+  return {
+    opportunityId: listingId,
+    listing,
+    statistics: { marketId: normalized.marketId, observedAt: gui.observedAt, sampleSize: 1, weightedMedian: priceTotal, rollingMedian: priceTotal, ema: priceTotal, p10: priceTotal, p25: priceTotal, p75: priceTotal, minimumPrice: priceTotal, listingCount: 1, visibleSupply: 1, volatility: 0, liquidityScore: 1, estimatedSaleTimeMs: 0, fairValue: priceTotal, confidence: 'HIGH', stale: false },
+    expectedSellPrice: priceTotal,
+    expectedProfit: 0,
+    roi: 0,
+    expectedHoldingTimeMs: 0,
+    profitPerCapitalHour: 0,
+    score: 0,
+    confidence: 'HIGH',
+    detectedAt: gui.observedAt,
+  };
+}
+
+function createBuyTestCommand(adapter: MineflayerGameClientAdapter, config: TradingConfig, database: Database, botId: string): BuyTestCommand {
+  const test = config.execution.liveBuyTest;
+  if (test === undefined) throw new Error('LIVE_BUY_TEST_NOT_EXPLICITLY_ENABLED');
+  const mode = new LiveBuyTestMode(new SemanticPurchaseWorkflow(adapter, new InMemoryListingLock(), config), database, config);
+  return {
+    async execute(slot: number) {
+      const gui = await adapter.getCurrentGui();
+      if (gui === null) throw new Error('BUYTEST_REQUIRES_ACTIVE_GUI');
+      const opportunity = buyTestOpportunity(gui, slot);
+      const balance = await adapter.getBalance();
+      const accountId = await database.accountIdForExternalIdentity(botId);
+      if (accountId === null) throw new Error('BUYTEST_ACCOUNT_NOT_ENABLED');
+      const riskState: AccountRiskState = { accountId, availableCapital: balance ?? 0, dailyRealizedPnl: 0, consecutiveExecutionFailures: 0, positions: [], tradingPaused: false };
+      const result = await mode.execute(opportunity, riskState, botId, { profile: donutGuiProfile });
+      return { state: result.state === 'PURCHASED' ? 'PURCHASED' : result.state === 'UNKNOWN' ? 'UNKNOWN' : 'FAILED', ...(result.reason === undefined ? {} : { reason: result.reason }) };
+    },
+  };
 }
 
 export function formatSlot(gui: ClientGuiSnapshot | null, slotArgument: string | undefined): string {
@@ -184,6 +262,9 @@ export function formatInventory(inventory: Awaited<ReturnType<MineflayerGameClie
 export async function startMineflayerSmokeTest(environment: SmokeTestEnvironment = process.env): Promise<void> {
   const options = mineflayerOptionsFromEnvironment(environment);
   const adapter = new MineflayerGameClientAdapter(options);
+  const config = await loadTradingConfig();
+  const database = new Database(loadEnvironment().DATABASE_URL);
+  const buyTest = config.execution.liveBuyTest === undefined ? undefined : createBuyTestCommand(adapter, config, database, options.username);
   let shuttingDown = false;
   process.stdout.write(`Mineflayer smoke test host=${options.host} port=${options.port ?? 25565} username=${options.username} version=${options.version ?? 'auto'} profilesFolder=${options.profilesFolder ?? '.minecraft-auth'} auth=microsoft\n`);
   let refreshClickAt: Date | null = null;
@@ -215,15 +296,19 @@ export async function startMineflayerSmokeTest(environment: SmokeTestEnvironment
     shuttingDown = true;
     readline.close();
     await adapter.disconnect();
+    await database.close();
     process.stdout.write(`Mineflayer smoke test stopped: ${reason}\n`);
   }
   readline.on('line', (line) => {
     void runSmokeCommand(adapter, line, async (details) => new Promise((resolve) => {
       process.stdout.write(`${details}\nType yes to confirm: `);
       readline.once('line', (answer) => { resolve(answer.trim().toLowerCase() === 'yes'); });
-    })).then(async (output) => {
+    }), buyTest).then(async (output) => {
       if (output === 'QUIT') await shutdown('command');
-      else { process.stdout.write(`${output}\n`); readline.prompt(); }
+      else if (output.startsWith('buytest state=FAILED') || output.startsWith('buytest state=UNKNOWN')) {
+        process.stdout.write(`${output}\n`);
+        await shutdown('buytest-terminal-state');
+      } else { process.stdout.write(`${output}\n`); readline.prompt(); }
     }).catch((error: unknown) => { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); readline.prompt(); });
   });
   process.once('SIGINT', () => { void shutdown('SIGINT'); });

@@ -3,6 +3,17 @@ import { resolve } from 'node:path';
 import { Pool, type PoolClient } from 'pg';
 import type { AuctionListing, GameObservation, MarketStatistics, Opportunity } from '@wtrader/shared-types';
 
+export interface PurchaseAttemptOutcome {
+  readonly opportunityId: string;
+  readonly accountId: string;
+  readonly correlationId: string;
+  readonly status: 'SUCCEEDED' | 'FAILED' | 'UNKNOWN';
+  readonly reason?: string;
+  readonly evidence: Record<string, unknown>;
+  readonly startedAt: Date;
+  readonly completedAt: Date;
+}
+
 export class Database {
   readonly pool: Pool;
 
@@ -32,6 +43,23 @@ export class Database {
     } finally {
       client.release();
     }
+  }
+
+  async accountIdForExternalIdentity(externalAccountId: string): Promise<string | null> {
+    const result = await this.pool.query<{ id: string }>('SELECT id FROM accounts WHERE external_account_id = $1 AND enabled = true', [externalAccountId]);
+    return result.rows[0]?.id ?? null;
+  }
+
+  async savePurchaseAttempt(outcome: PurchaseAttemptOutcome): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO purchase_attempts (
+        opportunity_id, account_id, status, correlation_id, failure_reason, evidence, started_at, completed_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        outcome.opportunityId, outcome.accountId, outcome.status, outcome.correlationId,
+        outcome.reason ?? null, outcome.evidence, outcome.startedAt, outcome.completedAt,
+      ],
+    );
   }
 
   async upsertListing(listing: AuctionListing): Promise<void> {

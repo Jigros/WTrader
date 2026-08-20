@@ -44,6 +44,10 @@ const tradingConfigSchema = z.object({
     safetyMode: z.enum(['OBSERVE_ONLY', 'ASSISTED', 'LIVE', 'PAUSED']).default('OBSERVE_ONLY'),
     allowedCommands: z.array(z.string().regex(/^\/[a-zA-Z0-9_-]+$/)),
     clickConfirmationRequired: z.boolean(),
+    liveBuyTest: z.object({
+      executeOnce: z.literal(true),
+      maxPrice: z.number().positive(),
+    }).optional(),
   }),
   mineflayer: z.object({
     host: z.string().min(1),

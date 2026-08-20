@@ -15,6 +15,9 @@ export interface MockPurchase {
   readonly guiSlot: number;
   readonly inventoryItem: InventorySnapshot['entries'][number]['item'];
   readonly price: number;
+  readonly confirmationGui?: ClientGuiSnapshot;
+  readonly postPurchaseGui?: ClientGuiSnapshot;
+  readonly confirmSlot?: number;
 }
 
 export class MockGameClientAdapter implements GameClientAdapter {
@@ -24,6 +27,7 @@ export class MockGameClientAdapter implements GameClientAdapter {
   private gui: ClientGuiSnapshot | null = null;
   private readonly handlers = new Set<(event: GameClientEvent) => void>();
   private readonly purchases = new Map<number, MockPurchase>();
+  private pendingPurchase: MockPurchase | null = null;
 
   constructor(initialBalance: number, initialInventory: InventorySnapshot = { observedAt: new Date(0), entries: [] }) {
     this.balance = initialBalance;
@@ -74,16 +78,28 @@ export class MockGameClientAdapter implements GameClientAdapter {
     if (this.gui === null || request.expectedSignature !== undefined && request.expectedSignature !== this.gui.signature) {
       return Promise.resolve({ accepted: false, changed: false, message: 'GUI signature changed' });
     }
+    if (this.pendingPurchase !== null) {
+      if (request.slot !== (this.pendingPurchase.confirmSlot ?? 15) || this.pendingPurchase.price > this.balance) return Promise.resolve({ accepted: false, changed: false, message: 'Listing unavailable' });
+      const purchase = this.pendingPurchase;
+      this.pendingPurchase = null;
+      this.balance -= purchase.price;
+      this.inventory = { observedAt: new Date(), entries: [...this.inventory.entries, { slot: this.nextInventorySlot(), item: purchase.inventoryItem }] };
+      if (purchase.postPurchaseGui !== undefined) this.setGui(purchase.postPurchaseGui);
+      this.emit({ type: 'BALANCE_UPDATED', observedAt: new Date(), balance: this.balance });
+      this.emit({ type: 'INVENTORY_UPDATED', observedAt: new Date(), inventory: this.inventory });
+      this.emit({ type: 'CHAT_MESSAGE', observedAt: new Date(), message: 'Purchase successful' });
+      return Promise.resolve({ accepted: true, changed: true });
+    }
     const purchase = this.purchases.get(request.slot);
-    if (purchase === undefined || purchase.price > this.balance) {
-      return Promise.resolve({ accepted: false, changed: false, message: 'Listing unavailable' });
+    if (purchase === undefined || purchase.price > this.balance) return Promise.resolve({ accepted: false, changed: false, message: 'Listing unavailable' });
+    this.purchases.delete(request.slot);
+    if (purchase.confirmationGui !== undefined) {
+      this.pendingPurchase = purchase;
+      this.setGui(purchase.confirmationGui);
+      return Promise.resolve({ accepted: true, changed: true });
     }
     this.balance -= purchase.price;
-    this.inventory = {
-      observedAt: new Date(),
-      entries: [...this.inventory.entries, { slot: this.nextInventorySlot(), item: purchase.inventoryItem }],
-    };
-    this.purchases.delete(request.slot);
+    this.inventory = { observedAt: new Date(), entries: [...this.inventory.entries, { slot: this.nextInventorySlot(), item: purchase.inventoryItem }] };
     this.emit({ type: 'BALANCE_UPDATED', observedAt: new Date(), balance: this.balance });
     this.emit({ type: 'INVENTORY_UPDATED', observedAt: new Date(), inventory: this.inventory });
     this.emit({ type: 'CHAT_MESSAGE', observedAt: new Date(), message: 'Purchase successful' });

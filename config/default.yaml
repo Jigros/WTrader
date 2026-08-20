@@ -28,7 +28,7 @@ risk:
   staleMarketAction: pause
   listingLockTtlMs: 5000
 execution:
-  safetyMode: OBSERVE_ONLY
+  safetyMode: LIVE
   allowedCommands:
     - /ah
   clickConfirmationRequired: true

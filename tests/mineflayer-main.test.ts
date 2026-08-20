@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatRawGuiSlot, formatRawGuiWindow, formatSmokeEvent, mineflayerOptionsFromEnvironment } from '../apps/minecraft-executor/src/mineflayer-main.js';
+import { formatRawGuiSlot, formatRawGuiWindow, formatSmokeEvent, mineflayerOptionsFromEnvironment, runSmokeCommand } from '../apps/minecraft-executor/src/mineflayer-main.js';
 
 describe('Mineflayer smoke runner helpers', () => {
   it('reads required configuration without credentials beyond username', () => {
@@ -12,6 +12,14 @@ describe('Mineflayer smoke runner helpers', () => {
     expect(formatRawGuiSlot(rawItem, '13')).toContain('"name": "diamond"');
     expect(formatRawGuiSlot(rawItem, '13')).not.toContain('secret');
     expect(formatRawGuiWindow({ id: 1, type: 'minecraft:generic_9x3', title: 'Confirm Purchase', slots: [null, rawItem] })).toContain('"slot": 1');
+  });
+
+  it('exposes a bounded buy-test command and help text', async () => {
+    const adapter = {} as never;
+    const buyTest = { execute: (slot: number) => Promise.resolve({ state: slot === 7 ? 'PURCHASED' as const : 'FAILED' as const }) };
+    await expect(runSmokeCommand(adapter, '/buytest 45', undefined, buyTest)).resolves.toBe('Usage: /buytest <slot 0..44>');
+    await expect(runSmokeCommand(adapter, '/buytest 7', undefined, buyTest)).resolves.toBe('buytest state=PURCHASED');
+    await expect(runSmokeCommand(adapter, '/help')).resolves.toContain('/buytest <slot 0..44>');
   });
 
   it('formats concise GUI update events', () => {
